@@ -1,0 +1,438 @@
+/* ---------------------------------------------------------------------------
+   Hero geometry follows blueprint §1.1: frosted panel 0–47.8%, orb at
+   (52%, 49%) at 45cqw, headline at (8.6%, 27.6%), CTA at 81.8%, chevrons at
+   (76.6%, 25%), social squares bottom-right 8.6%/5%.
+
+   One deliberate deviation: the reference frame's headline was short, so
+   8.6cqw fit its panel. "Your Society." / "Better Deals." is about 6em wide,
+   which at 8.6cqw would overrun the glass and collide with the orb. The type
+   is set at 6.2cqw (still display-scale, same line-height .95) so the full
+   three-line headline stays inside the panel at every card width.
+   --------------------------------------------------------------------------- */
+
+.canvas {
+  position: relative;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(14px, 3.2vw, 46px);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.canvas::before {
+  content: '';
+  position: absolute;
+  inset: -25% -10% auto -25%;
+  height: 90vh;
+  background: radial-gradient(45% 55% at 14% 42%, rgba(185, 182, 234, 0.6), transparent 70%);
+  pointer-events: none;
+}
+
+.card {
+  container-type: inline-size;
+  position: relative;
+  overflow: hidden;
+  width: min(94vw, 1100px);
+  aspect-ratio: 16 / 9;
+  background: linear-gradient(120deg, #c9b6ea 0%, #c7a4da 25%, #cdadd8 100%);
+  box-shadow: var(--shadow);
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 70% at -2% 50%, rgba(185, 182, 234, 0.52), transparent 65%),
+    radial-gradient(45% 60% at 82% 12%, rgba(255, 255, 255, 0.18), transparent 70%);
+}
+
+.orb-slot {
+  position: absolute;
+  left: 52%;
+  top: 49%;
+  width: 45cqw;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+}
+
+.glass {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 47.8%;
+  z-index: 2;
+  background: var(--glass);
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(22px) saturate(125%);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+}
+
+.glass::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0) 42%,
+    rgba(255, 255, 255, 0.07)
+  );
+}
+
+.brand {
+  position: absolute;
+  left: 10.3%;
+  top: 9.5%;
+  z-index: 5;
+  color: #fff;
+}
+
+.nav {
+  position: absolute;
+  top: 9%;
+  right: 7%;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2.3cqw;
+  font-size: 1.28cqw;
+  color: #fff;
+}
+
+.nav__link {
+  position: relative;
+  opacity: 0.86;
+  padding-bottom: 3px;
+  transition: opacity var(--dur) var(--ease);
+}
+.nav__link::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 1px;
+  background: #fff;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur) var(--ease);
+}
+.nav__link:hover {
+  opacity: 1;
+}
+.nav__link:hover::after {
+  transform: scaleX(1);
+}
+
+.burger {
+  width: 2.2cqw;
+  height: 1.35cqw;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+.burger span {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: var(--deep);
+  transition: transform var(--dur) var(--ease);
+}
+.burger:hover span:nth-child(1) {
+  transform: translateX(3px);
+}
+.burger:hover span:nth-child(3) {
+  transform: translateX(-3px);
+}
+
+.arrows {
+  position: absolute;
+  left: 76.6%;
+  top: 25%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2.2cqw;
+}
+
+.chev {
+  width: 2.9cqw;
+  height: 2.9cqw;
+  min-width: 26px;
+  min-height: 26px;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  opacity: 0.92;
+  transition:
+    opacity var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+.chev:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.scene-rail {
+  position: absolute;
+  left: 76.6%;
+  top: 31.8%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  gap: 1.4cqw;
+  font-size: 0.95cqw;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+}
+.scene-rail span {
+  transition: color var(--dur) var(--ease);
+}
+.scene-rail .is-active {
+  color: #fff;
+}
+
+.hero-copy {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+}
+
+.hero-copy h1 {
+  position: absolute;
+  left: 8.6%;
+  top: 27.6%;
+  font-size: 6.2cqw;
+  line-height: 0.95;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #fff;
+  text-shadow: 0 2px 26px rgba(91, 42, 134, 0.16);
+}
+.hero-copy h1 span {
+  display: block;
+  white-space: nowrap;
+}
+
+.sub {
+  position: absolute;
+  left: 8.6%;
+  top: 73.5%;
+  margin: 0;
+  font-size: 1.9cqw;
+  font-weight: 300;
+  letter-spacing: 0.005em;
+  color: rgba(255, 255, 255, 0.95);
+  white-space: nowrap;
+}
+.sub span {
+  opacity: 0.55;
+  padding: 0 0.25em;
+}
+
+.cta {
+  position: absolute;
+  left: 8.6%;
+  top: 81.8%;
+  height: 5.8%;
+  min-width: 9.9%;
+  padding: 0 1.7cqw;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7cqw;
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  font-family: var(--font-condensed);
+  font-size: 1.55cqw;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+.cta:hover {
+  background: #fff;
+  color: var(--deep);
+  box-shadow: 0 14px 30px -12px rgba(91, 42, 134, 0.55);
+}
+
+.hero-card .socials {
+  position: absolute;
+  right: 8.6%;
+  bottom: 5%;
+  z-index: 6;
+  --social-size: 3cqw;
+}
+
+.hero-card .lang-chips {
+  position: absolute;
+  right: 8.6%;
+  bottom: calc(5% + 4.6cqw);
+  z-index: 12;
+}
+
+.powered {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: clamp(8px, 1.4vw, 18px);
+  margin: 0;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(59, 26, 94, 0.5);
+}
+
+.grain {
+  z-index: 9;
+}
+
+/* ------------------------------ phone layout ------------------------------ */
+@media (max-width: 760px) {
+  .canvas {
+    display: block;
+    padding: 0;
+    min-height: 100dvh;
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 100dvh;
+    aspect-ratio: auto;
+  }
+  .glass {
+    inset: 0;
+    width: 100%;
+    background: linear-gradient(
+      180deg,
+      rgba(110, 60, 160, 0.12),
+      rgba(110, 60, 160, 0.24) 46%,
+      rgba(110, 60, 160, 0.46)
+    );
+  }
+  .orb-slot {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+    margin: 15vw auto 0;
+    width: 74cqw;
+    order: 1;
+  }
+  .brand {
+    left: 7%;
+    top: 4.6%;
+  }
+  .nav {
+    top: 4.6%;
+    right: 7%;
+    gap: 4.5vw;
+    font-size: 3vw;
+  }
+  .nav__link {
+    display: none;
+  }
+  .burger {
+    width: 7vw;
+    height: 4.6vw;
+    min-width: 24px;
+    min-height: 16px;
+  }
+  .arrows {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+    order: 2;
+    justify-content: center;
+    margin-top: 1vw;
+    gap: 12vw;
+  }
+  .chev {
+    width: 10vw;
+    height: 10vw;
+    color: #fff;
+  }
+  .scene-rail {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+    order: 2;
+    justify-content: center;
+    font-size: 2.6vw;
+    margin-top: 1vw;
+  }
+  .hero-copy {
+    position: relative;
+    inset: auto;
+    order: 3;
+    padding: 6vw 7% 22vw;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4.5vw;
+  }
+  .hero-copy h1 {
+    position: static;
+    font-size: 10.6cqw;
+    width: auto;
+  }
+  .hero-copy h1 span {
+    white-space: normal;
+  }
+  .sub {
+    position: static;
+    font-size: 3.5cqw;
+    white-space: normal;
+  }
+  .cta {
+    position: static;
+    height: auto;
+    padding: 3.4vw 5vw;
+    font-size: 3.6cqw;
+  }
+  .hero-card .socials {
+    position: absolute;
+    left: 7%;
+    right: auto;
+    bottom: 6%;
+    --social-size: 11vw;
+  }
+  .hero-card .lang-chips {
+    right: auto;
+    left: 7%;
+    bottom: calc(6% + 15vw);
+  }
+  .powered {
+    display: none;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 1024px) {
+  .nav {
+    font-size: 13px;
+    gap: 18px;
+  }
+  .burger {
+    width: 22px;
+    height: 14px;
+  }
+}

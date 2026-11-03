@@ -1,0 +1,182 @@
+.home {
+  min-height: 100dvh;
+  background: var(--bg);
+}
+
+.how {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: clamp(36px, 5vw, 80px) clamp(18px, 4vw, 48px) clamp(56px, 7vw, 96px);
+  color: var(--deep-ink);
+}
+
+.how__head {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 660px;
+}
+
+.how__head .logo {
+  color: var(--deep);
+  margin-bottom: 4px;
+}
+
+.how__eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(59, 26, 94, 0.6);
+}
+
+.how__title {
+  font-size: clamp(26px, 3.6vw, 44px);
+  line-height: 1.08;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.how__lede {
+  font-size: 15px;
+  line-height: 1.6;
+  color: rgba(59, 26, 94, 0.75);
+  max-width: 54ch;
+}
+
+.how__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 16px;
+  margin-top: clamp(26px, 4vw, 44px);
+}
+
+.how__card {
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  padding: 22px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 22px 40px -34px rgba(59, 26, 94, 0.8);
+}
+
+.how__n {
+  font-family: var(--font-condensed);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  color: rgba(59, 26, 94, 0.5);
+}
+
+.how__card h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 8px 0;
+}
+
+.how__card p {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: rgba(59, 26, 94, 0.72);
+}
+
+.how__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 30px;
+}
+
+.how__actions .btn-solid {
+  background: var(--deep);
+  border-color: var(--deep);
+  color: #fff;
+}
+.how__actions .btn-solid:hover {
+  color: #fff;
+}
+
+.how__actions .btn-outline {
+  color: var(--deep);
+  border-color: rgba(59, 26, 94, 0.38);
+}
+.how__actions .btn-outline:hover {
+  background: rgba(59, 26, 94, 0.08);
+}
+
+.how__lang {
+  background: none;
+  border: 0;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: rgba(59, 26, 94, 0.78);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 0;
+}
+
+.how__note {
+  margin-top: 26px;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: rgba(59, 26, 94, 0.55);
+  max-width: 72ch;
+}
+
+.demobar {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(46, 16, 70, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(8px);
+  color: #fff;
+}
+
+.demobar__phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding-right: 6px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.demobar__btn {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  padding: 7px 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition:
+    background 0.3s var(--ease),
+    color 0.3s var(--ease);
+}
+.demobar__btn:hover {
+  background: #fff;
+  color: var(--deep);
+}
+.demobar__btn--ghost {
+  background: transparent;
+}
+
+@media (max-width: 600px) {
+  .demobar {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    justify-content: space-between;
+  }
+  .demobar__phase {
+    max-width: 40%;
+  }
+}

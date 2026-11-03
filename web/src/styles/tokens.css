@@ -1,0 +1,42 @@
+/* ---------------------------------------------------------------------------
+   NegoAI design tokens.
+   Colours are sampled from the reference frame; the glass tint is deepened per
+   blueprint §1.7 so white display type still clears large-text contrast.
+   --------------------------------------------------------------------------- */
+:root {
+  --bg: #eed7fd;
+  --zone-1: #c9b6ea;
+  --zone-2: #c7a4da;
+  --zone-3: #cdadd8;
+  --periwinkle: #b9b6ea;
+
+  --deep: #5b2a86;
+  --deep-ink: #2e1046;
+
+  --fur-root: #5a1f94;
+  --fur-base: #7d32a0;
+  --fur-mid: #924db2;
+  --fur-tip: #b27fd8;
+  --fur-lift: #e6ccff;
+
+  --ink: #ffffff;
+  --ink-dim: rgba(255, 255, 255, 0.72);
+
+  --glass: rgba(110, 60, 160, 0.28);
+  --glass-hi: rgba(255, 255, 255, 0.22);
+  --glass-line: rgba(255, 255, 255, 0.28);
+  --on-glass: #3b1a5e;
+  --on-glass-dim: rgba(59, 26, 94, 0.72);
+  --on-glass-faint: rgba(59, 26, 94, 0.5);
+
+  --shadow: 0 30px 60px -10px rgba(140, 70, 200, 0.35);
+  --shadow-soft: 0 18px 40px -18px rgba(90, 31, 148, 0.55);
+
+  --font-display: 'Poppins', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-condensed: 'Oswald', 'Arial Narrow', Impact, sans-serif;
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 600ms;
+
+  --radius: 0px;
+}

@@ -1,0 +1,74 @@
+.fur-torus {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  filter: drop-shadow(0 24px 40px rgba(90, 31, 148, 0.28));
+}
+
+.fur-torus__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.fur-torus__canvas canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* CSS fallback: a blurred conic ring with the same silhouette. Shown when
+   WebGL is unavailable (or canvas creation fails) so the layout never breaks. */
+.fur-torus__ring {
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    #5a1f94,
+    #7d32a0 18%,
+    #b27fd8 34%,
+    #924db2 52%,
+    #5a1f94 70%,
+    #b27fd8 86%,
+    #5a1f94
+  );
+  filter: blur(9px) saturate(115%);
+  mask: radial-gradient(closest-side, transparent 48%, #000 56%, #000 100%);
+  -webkit-mask: radial-gradient(closest-side, transparent 48%, #000 56%, #000 100%);
+  animation: fur-fallback-spin 6.7s linear infinite;
+}
+
+.fur-torus__ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(178, 127, 216, 0.35), transparent 70%);
+  filter: blur(14px);
+}
+
+.fur-torus[data-state='listening'] .fur-torus__ring {
+  animation-duration: 0s;
+}
+.fur-torus[data-state='thinking'] .fur-torus__ring {
+  animation-duration: 2.7s;
+}
+
+@keyframes fur-fallback-spin {
+  from {
+    transform: rotate(0deg) scaleX(1);
+  }
+  50% {
+    transform: rotate(90deg) scaleX(0.55);
+  }
+  to {
+    transform: rotate(180deg) scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fur-torus__ring {
+    animation: none;
+  }
+}
