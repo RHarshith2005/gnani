@@ -10,6 +10,8 @@ exists — the built SPA on the same origin, so one command runs the whole demo.
 from __future__ import annotations
 
 import logging
+import secrets
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -71,6 +73,54 @@ def vendors() -> dict:
 @app.get("/api/demand")
 def demand(product: str = "water can") -> dict:
     return db.aggregate_demand(db.COMMUNITY_ID, product)
+
+
+@app.get("/api/demand/summary")
+def demand_summary() -> dict:
+    """Households and total weekly quantity per product (Prompt 8)."""
+    return db.demand_summary(db.COMMUNITY_ID)
+
+
+@app.get("/api/demand/requests")
+def demand_requests(limit: int = 20) -> dict:
+    return {"requests": db.list_demand(db.COMMUNITY_ID, limit=limit)}
+
+
+# Demo roles only: no password, no signup. Tokens live in memory for one hour.
+_DEMO_USERS = {
+    "resident": {"id": "res-asha", "name": "Asha", "flat": "A-204", "role": "resident"},
+    "admin": {"id": "res-admin", "name": "Society admin", "flat": "Office", "role": "admin"},
+}
+_DEMO_TOKENS: dict[str, dict] = {}
+_DEMO_TOKEN_TTL = 3600
+
+
+class DemoLoginIn(BaseModel):
+    role: str = Field(default="resident", pattern="^(resident|admin)$")
+
+
+@app.post("/api/demo-login")
+def demo_login(payload: DemoLoginIn) -> dict:
+    """Pick a seeded demo role; there is deliberately no real authentication."""
+    now = time.time()
+    for token, entry in list(_DEMO_TOKENS.items()):
+        if entry["expires_at"] <= now:
+            _DEMO_TOKENS.pop(token, None)
+    token = secrets.token_urlsafe(24)
+    user = dict(_DEMO_USERS[payload.role])
+    _DEMO_TOKENS[token] = {"user": user, "expires_at": now + _DEMO_TOKEN_TTL}
+    return {
+        "token": token,
+        "token_type": "demo",
+        "expires_in": _DEMO_TOKEN_TTL,
+        "user": user,
+        "notice": "Synthetic demo role. No real signup, no password, no production auth.",
+    }
+
+
+@app.get("/api/demo-users")
+def demo_users() -> dict:
+    return {"users": list(_DEMO_USERS.values())}
 
 
 @app.get("/api/sessions")

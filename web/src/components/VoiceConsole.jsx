@@ -8,11 +8,60 @@ import { voice } from '../lib/voice.js'
 import { ROLE_LABEL } from '../lib/format.js'
 
 const ease = [0.22, 1, 0.36, 1]
+const API = import.meta.env.VITE_API_URL || ''
 
 const QUICK = {
   'kn-IN': 'ನನಗೆ ವಾರಕ್ಕೆ ಮೂರು ನೀರಿನ ಕ್ಯಾನ್ ಬೇಕು',
   'hi-IN': 'मुझे हर हफ्ते तीन पानी के कैन चाहिए',
   'en-IN': 'Three water cans every week',
+}
+
+function MyRequests() {
+  const demandSaved = useSession((s) => s.demandSaved)
+  const [rows, setRows] = useState([])
+  const [error, setError] = useState(null)
+  const count = demandSaved.length
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API}/api/demand/requests?limit=5`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data) => {
+        if (!cancelled) {
+          setRows(data.requests || [])
+          setError(null)
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [count])
+
+  if (error || (!rows.length && !count)) return null
+
+  return (
+    <details className="requests" open={count > 0}>
+      <summary>
+        My requests <span className="pill">{rows.length} saved</span>
+      </summary>
+      {rows.map((row) => (
+        <div className="requests__row" key={row.id}>
+          <span>
+            {row.qty} × {row.product}
+          </span>
+          <small>
+            {row.frequency}
+            {row.delivery_day ? ` · ${row.delivery_day}` : ''}
+            {row.flat_number ? ` · ${row.flat_number}` : ''}
+          </small>
+          <span className="requests__lang">{row.language}</span>
+        </div>
+      ))}
+    </details>
+  )
 }
 
 function MicIcon() {
@@ -143,6 +192,8 @@ export default function VoiceConsole() {
             ))}
           </div>
         )}
+
+        <MyRequests />
       </div>
 
       <AnimatePresence>

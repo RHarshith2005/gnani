@@ -33,7 +33,7 @@ from ..negotiation.engine import (
     Offer,
 )
 from ..negotiation.personas import PERSONAS, SimVendor
-from ..speech.gnani import GnaniSTTStream, GnaniTTSService
+from ..speech.gnani import GnaniSTTStream, GnaniTTSService, TTSCreditGuard
 from ..speech.numbers import normalise, spell_number
 from .pcm import b64decode_pcm, b64encode_pcm, rms
 
@@ -122,11 +122,21 @@ class VoiceSession:
         self.tasks: set[asyncio.Task] = set()
         self.llm = LLMClient(self.config)
         self.tts = GnaniTTSService(self.config)
+        self.credits = TTSCreditGuard(
+            budget=self.config.credit_budget,
+            session_cap=self.config.session_tts_chars,
+        )
         self.stt: Optional[GnaniSTTStream] = None
         self.pace = max(0.01, self.config.demo_pace) if self.mode == "guided" else 1.0
         self._last_level = 0.0
         self._closed = False
         self._turns = 0
+        # Playback controls (Prompt 10). The gate is set while running.
+        self.paused = asyncio.Event()
+        self.paused.set()
+        self._credit_notice = False
+        self._skip_requested = False
+        self.negotiation_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------ plumbing
     async def emit(self, payload: dict[str, Any]) -> None:
@@ -225,14 +235,24 @@ class VoiceSession:
             duration = max(0.02, duration * max(0.01, self.pace))
         return duration
 
-    async def speak(self, text: str, subtitle: str = "", *, lang: Optional[str] = None) -> None:
+    async def speak(
+        self,
+        text: str,
+        subtitle: str = "",
+        *,
+        lang: Optional[str] = None,
+        voice: Optional[str] = None,
+        role: str = "agent",
+    ) -> None:
         if not text:
             return
+        await self._wait_if_paused()
         lang = normalise(lang or self.language)
         await self.emit({"type": "state", "orb": "thinking"})
         await self.emit(
             {
                 "type": "agent",
+                "role": role,
                 "text": text,
                 "subtitle": subtitle or text,
                 "lang": lang,
@@ -240,8 +260,8 @@ class VoiceSession:
             }
         )
         await self.emit({"type": "state", "orb": "speaking"})
-        if self.tts.enabled:
-            audio = await self.tts.synthesize(text, lang)
+        if self.tts.enabled and self.credits.allow(len(text)):
+            audio = await self.tts.synthesize(text, lang, voice=voice)
             if audio:
                 await self.emit(
                     {
@@ -250,7 +270,19 @@ class VoiceSession:
                         "sampleRate": self.config.gnani_sample_rate,
                     }
                 )
-        await asyncio.sleep(self._speech_seconds(text))
+        elif self.tts.enabled and self.credits.exhausted and not self._credit_notice:
+            self._credit_notice = True
+            await self.emit(
+                {
+                    "type": "notice",
+                    "level": "warn",
+                    "text": (
+                        "Voice credit budget reached — continuing in text with English "
+                        "subtitles. Every number still comes from the engine."
+                    ),
+                }
+            )
+        await self._pauseable_sleep(self._speech_seconds(text))
         await self.emit({"type": "state", "orb": "listening" if self.mode == "live" else "idle"})
 
     async def _greet(self) -> None:
@@ -258,6 +290,19 @@ class VoiceSession:
         await self.speak(spoken, subtitle)
         if self.mode == "live":
             await self.emit({"type": "state", "orb": "listening"})
+
+    async def _wait_if_paused(self) -> None:
+        while not self.paused.is_set():
+            await asyncio.sleep(0.05)
+
+    async def _pauseable_sleep(self, seconds: float) -> None:
+        """Sleep in small steps so pause and stop feel immediate."""
+        remaining = max(0.0, seconds)
+        while remaining > 0:
+            await self._wait_if_paused()
+            step = min(0.1, remaining)
+            await asyncio.sleep(step)
+            remaining -= step
 
     async def _resident(self, text: str, subtitle: str = "") -> None:
         await self.emit(
@@ -307,7 +352,18 @@ class VoiceSession:
                 f"verified demand is {spell_number(AGGREGATE_QTY, 'en-IN')} water cans a week. "
                 "I will call three suppliers now.",
             )
-            await self.run_negotiation()
+            await self.emit(
+                {
+                    "type": "demand_saved",
+                    "product": self.intake.product or "water can",
+                    "qty": self.intake.qty or 3,
+                    "frequency": self.intake.frequency,
+                    "delivery_day": self.intake.delivery_day,
+                    "language": self.language,
+                }
+            )
+            # Spawned so stop/skip controls still reach the socket.
+            self.negotiation_task = self._spawn(self.run_negotiation())
 
     def _aggregate_line(self) -> str:
         qty_words = spell_number(AGGREGATE_QTY, self.language)
@@ -387,6 +443,41 @@ class VoiceSession:
     async def barge_in(self) -> None:
         await self.emit({"type": "state", "orb": "listening"})
         await self.emit({"type": "notice", "level": "info", "text": "Interrupted — listening."})
+
+    async def pause(self) -> None:
+        self.paused.clear()
+        await self.emit({"type": "control", "action": "paused"})
+        await self.emit(
+            {"type": "notice", "level": "info", "text": "Paused — playback and turns are on hold."}
+        )
+
+    async def resume(self) -> None:
+        self.paused.set()
+        await self.emit({"type": "control", "action": "resumed"})
+
+    async def stop(self) -> None:
+        """Stop the negotiation without deleting its append-only audit trail."""
+        self.paused.set()
+        self._skip_requested = False
+        if self.negotiation_task is not None and not self.negotiation_task.done():
+            self.negotiation_task.cancel()
+        self.negotiation_task = None
+        self.phase = "stopped"
+        await self.emit({"type": "control", "action": "stopped"})
+        await self.emit(
+            {
+                "type": "notice",
+                "level": "info",
+                "text": "Negotiation stopped. Completed events stay in the audit log.",
+            }
+        )
+
+    async def skip(self) -> None:
+        self._skip_requested = True
+        await self.emit({"type": "control", "action": "skipped"})
+        await self.emit(
+            {"type": "notice", "level": "info", "text": "Skipping to the next supplier."}
+        )
 
     async def approve(self, decision: str, note: str = "") -> None:
         negotiation_id = self.negotiation_id or f"adhoc-{int(time.time())}"
@@ -469,6 +560,9 @@ class VoiceSession:
         await self.emit(self._negotiation_payload(next(iter(self.engines.values()))))
 
         for persona in PERSONAS:
+            if self._skip_requested:
+                self._skip_requested = False
+                continue
             engine = self.engines[persona.vendor_id]
             await self.emit(self._negotiation_payload(engine))
             directive = engine.start()
@@ -477,6 +571,17 @@ class VoiceSession:
 
             guard = 0
             while True:
+                await self._wait_if_paused()
+                if self._skip_requested:
+                    self._skip_requested = False
+                    await self.emit(
+                        {
+                            "type": "notice",
+                            "level": "info",
+                            "text": f"Skipped {engine.vendor_name}; moving on.",
+                        }
+                    )
+                    break
                 guard += 1
                 if guard > 10:
                     break
@@ -678,7 +783,12 @@ class VoiceSession:
                 "quote": offer.to_dict(),
             }
         )
-        await self.speak(spoken, subtitle)
+        await self.speak(
+            spoken,
+            subtitle,
+            voice=self.tts.distinct_voice(self.language, persona_vendor.persona.voice),
+            role="vendor",
+        )
         await self.emit_offers()
 
     async def vendor_delivery_turn(self, engine: NegotiationEngine) -> None:
@@ -719,7 +829,12 @@ class VoiceSession:
                 "quote": (offer or Offer(unit_price=sim.last_price or 0)).to_dict(),
             }
         )
-        await self.speak(spoken, subtitle)
+        await self.speak(
+            spoken,
+            subtitle,
+            voice=self.tts.distinct_voice(self.language, sim.persona.voice),
+            role="vendor",
+        )
         await self.emit_offers()
 
     async def emit_offers(self) -> None:

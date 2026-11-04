@@ -151,15 +151,14 @@ COMMUNITY_ID = "green-residency"
 
 
 def seed(conn: sqlite3.Connection) -> None:
-    row = conn.execute("SELECT id FROM communities WHERE id = ?", (COMMUNITY_ID,)).fetchone()
-    if row:
-        return
+    """Idempotent synthetic seed: Green Residency, 360 baseline cans, three vendors."""
     stamp = now_iso()
     with conn:
-        conn.execute(
-            "INSERT INTO communities (id, name, households, created_at) VALUES (?,?,?,?)",
-            (COMMUNITY_ID, "Green Residency", 120, stamp),
-        )
+        if not conn.execute("SELECT id FROM communities WHERE id = ?", (COMMUNITY_ID,)).fetchone():
+            conn.execute(
+                "INSERT INTO communities (id, name, households, created_at) VALUES (?,?,?,?)",
+                (COMMUNITY_ID, "Green Residency", 120, stamp),
+            )
         vendors = [
             ("vendor-stubborn", "Sri Lakshmi Water Agency", "stubborn", 300, 2, 60.0),
             ("vendor-friendly", "Bengaluru Aqua Distributors", "friendly volume-hungry", 240, 1, 0.0),
@@ -167,11 +166,47 @@ def seed(conn: sqlite3.Connection) -> None:
         ]
         for vendor_id, name, persona, free_qty, days, charge in vendors:
             conn.execute(
-                """INSERT INTO vendors
+                """INSERT OR IGNORE INTO vendors
                    (id, name, persona, product, free_delivery_qty, delivery_days, delivery_charge, created_at)
                    VALUES (?,?,?,?,?,?,?,?)""",
                 (vendor_id, name, persona, "water can", free_qty, days, charge, stamp),
             )
+
+        # 120 households x 3 water cans = the 360/week verified baseline. Fixed
+        # ids, so a second boot never double-counts and resident-added rows sit
+        # on top of it (360 -> 363 after one confirmed request).
+        residents = [
+            (f"res-{index}", COMMUNITY_ID, f"A-{index:03d}", "kn-IN", stamp)
+            for index in range(1, 121)
+        ]
+        conn.executemany(
+            """INSERT OR IGNORE INTO residents
+               (id, community_id, flat_number, language, created_at)
+               VALUES (?,?,?,?,?)""",
+            residents,
+        )
+        demands = [
+            (
+                f"dem-{index}",
+                f"res-{index}",
+                COMMUNITY_ID,
+                "water can",
+                3,
+                "weekly",
+                "Saturday",
+                "kn-IN",
+                "confirmed",
+                stamp,
+            )
+            for index in range(1, 121)
+        ]
+        conn.executemany(
+            """INSERT OR IGNORE INTO demand_requests
+               (id, resident_id, community_id, product, qty, frequency, delivery_day,
+                language, status, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            demands,
+        )
 
 
 def health() -> dict[str, Any]:
@@ -390,4 +425,56 @@ def get_events(negotiation_id: str) -> list[dict[str, Any]]:
 def list_vendors() -> list[dict[str, Any]]:
     conn = connect()
     rows = conn.execute("SELECT * FROM vendors ORDER BY id").fetchall()
+    return [dict(row) for row in rows]
+
+
+def demand_summary(community_id: str = COMMUNITY_ID) -> dict[str, Any]:
+    """Households and total weekly quantity per product, from confirmed rows."""
+    conn = connect()
+    rows = conn.execute(
+        """SELECT product,
+                  COALESCE(SUM(qty), 0) AS total_qty,
+                  COUNT(*) AS requests,
+                  COUNT(DISTINCT resident_id) AS households
+           FROM demand_requests
+           WHERE community_id = ? AND status = 'confirmed'
+           GROUP BY product
+           ORDER BY total_qty DESC""",
+        (community_id,),
+    ).fetchall()
+    community = conn.execute(
+        "SELECT name, households FROM communities WHERE id = ?", (community_id,)
+    ).fetchone()
+    products = [
+        {
+            "product": row["product"],
+            "total_qty": int(row["total_qty"] or 0),
+            "requests": int(row["requests"] or 0),
+            "households": int(row["households"] or 0),
+            "unit": "can" if row["product"] == "water can" else "unit",
+        }
+        for row in rows
+    ]
+    return {
+        "community_id": community_id,
+        "community": community["name"] if community else "Green Residency",
+        "households": int(community["households"]) if community else 0,
+        "products": products,
+        "total_qty": sum(item["total_qty"] for item in products),
+    }
+
+
+def list_demand(community_id: str = COMMUNITY_ID, limit: int = 20) -> list[dict[str, Any]]:
+    """The resident's request history, newest first."""
+    conn = connect()
+    rows = conn.execute(
+        """SELECT d.id, d.product, d.qty, d.frequency, d.delivery_day, d.language,
+                  d.status, d.created_at, r.flat_number
+           FROM demand_requests d
+           LEFT JOIN residents r ON r.id = d.resident_id
+           WHERE d.community_id = ?
+           ORDER BY d.created_at DESC, d.id DESC
+           LIMIT ?""",
+        (community_id, max(1, min(limit, 200))),
+    ).fetchall()
     return [dict(row) for row in rows]

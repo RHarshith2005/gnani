@@ -186,6 +186,20 @@ export class AudioPlayer {
     }
   }
 
+  pause() {
+    if (this.ctx && this.ctx.state === 'running') {
+      this.ctx.suspend().catch(() => {})
+    }
+    if (window.speechSynthesis?.speaking) window.speechSynthesis.pause()
+  }
+
+  resume() {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {})
+    }
+    if (window.speechSynthesis?.paused) window.speechSynthesis.resume()
+  }
+
   stop() {
     this.queue.forEach((src) => {
       try {

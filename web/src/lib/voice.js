@@ -179,6 +179,28 @@ export function toggleMic() {
   else enableMic().catch((err) => useSession.getState().setError(err.message))
 }
 
+/* ----- negotiation playback controls (Prompt 10) --------------------------- */
+
+export function pauseNegotiation() {
+  player.pause()
+  voiceClient.control('pause')
+}
+
+export function resumeNegotiation() {
+  voiceClient.control('resume')
+  player.resume()
+}
+
+export function stopNegotiation() {
+  player.stop()
+  voiceClient.control('stop')
+}
+
+export function skipVendor() {
+  player.stop()
+  voiceClient.control('skip')
+}
+
 /* -------------------------------------------------------------------------- */
 
 export const voice = {
@@ -242,6 +264,11 @@ export const voice = {
     player.stop()
     voiceClient.bargeIn()
   },
+
+  pause: pauseNegotiation,
+  resume: resumeNegotiation,
+  stop: stopNegotiation,
+  skip: skipVendor,
 
   toggleMic,
   enableMic,

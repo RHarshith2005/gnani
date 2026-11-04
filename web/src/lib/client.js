@@ -113,6 +113,10 @@ class VoiceClient {
     this.send({ type: 'barge_in' })
   }
 
+  control(action) {
+    this.send({ type: 'control', action })
+  }
+
   approve(decision, note = '') {
     this.send({ type: 'approve', decision, note })
   }

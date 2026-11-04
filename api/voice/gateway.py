@@ -84,6 +84,16 @@ async def voice_socket(websocket: WebSocket) -> None:
                     await session.handle_audio(data)
             elif kind == "barge_in":
                 await session.barge_in()
+            elif kind == "control":
+                action = payload.get("action")
+                if action == "pause":
+                    await session.pause()
+                elif action == "resume":
+                    await session.resume()
+                elif action == "stop":
+                    await session.stop()
+                elif action == "skip":
+                    await session.skip()
             elif kind == "approve":
                 await session.approve(
                     payload.get("decision", "approved"), payload.get("note", "")

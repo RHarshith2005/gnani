@@ -806,3 +806,58 @@
     font-size: 44px;
   }
 }
+
+/* Negotiation playback controls (Prompt 10) */
+.room__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+}
+.room__controls .btn-outline {
+  font-size: 12px;
+  padding: 7px 12px;
+}
+.room__controls .btn-outline:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Saved demand requests (Prompt 8) */
+.requests {
+  margin-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  padding-top: 10px;
+  color: var(--on-glass);
+}
+.requests summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.requests__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 13px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.requests__row:last-child {
+  border-bottom: 0;
+}
+.requests__row small {
+  color: var(--on-glass-faint);
+  flex: 1;
+}
+.requests__lang {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--on-glass-faint);
+}

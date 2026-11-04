@@ -29,6 +29,8 @@ const initial = {
   firstQuote: null,
   admin: null,
   approval: null,
+  control: null,
+  demandSaved: [],
   notices: [],
   error: null,
   micOn: false,
@@ -110,20 +112,26 @@ export const useSession = create((set) => ({
           partial: '',
         }))
         break
-      case 'agent':
+      case 'agent': {
+        // Vendor speech already arrived as a `vendor` event; this one only
+        // carries its audio, so it must not add a second transcript line.
+        const isVendor = event.role === 'vendor'
         set((s) => ({
-          lines: pushLine(s.lines, {
-            role: 'agent',
-            text: event.text,
-            subtitle: event.subtitle || '',
-            lang: event.lang,
-            tts: event.tts,
-          }),
+          lines: isVendor
+            ? s.lines
+            : pushLine(s.lines, {
+                role: 'agent',
+                text: event.text,
+                subtitle: event.subtitle || '',
+                lang: event.lang,
+                tts: event.tts,
+              }),
           partial: '',
           orb: 'speaking',
           speaking: true,
         }))
         break
+      }
       case 'confirm':
         set({ confirm: { text: event.text, items: event.items || [], id: ++lineSeq } })
         break
@@ -183,6 +191,24 @@ export const useSession = create((set) => ({
         break
       case 'approval':
         set({ approval: event, phase: 'done' })
+        break
+      case 'control':
+        set({ control: { action: event.action, ts: Date.now() } })
+        break
+      case 'demand_saved':
+        set((s) => ({
+          demandSaved: [
+            ...s.demandSaved,
+            {
+              id: ++lineSeq,
+              product: event.product,
+              qty: event.qty,
+              frequency: event.frequency,
+              delivery_day: event.delivery_day,
+              language: event.language,
+            },
+          ].slice(-6),
+        }))
         break
       case 'notice':
         set((s) => ({

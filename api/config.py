@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+VOICE_CATALOG = ROOT.parent / "config" / "voices.json"
+log = logging.getLogger("negoai.config")
 
 
 def _env(name: str, default: str = "") -> str:
@@ -61,7 +65,15 @@ class Settings:
     )
 
     demo_pace: float = field(default_factory=lambda: _env_float("DEMO_PACE", 0.55))
-    allow_origins: str = field(default_factory=lambda: _env("CORS_ORIGINS", "*"))
+    allow_origins: str = field(
+        default_factory=lambda: _env("ALLOWED_ORIGINS") or _env("CORS_ORIGINS", "*")
+    )
+
+    # Voice credit guard (Prompt 10): characters of TTS, per session and globally.
+    credit_budget: int = field(default_factory=lambda: int(_env_float("CREDIT_BUDGET", 60000)))
+    session_tts_chars: int = field(
+        default_factory=lambda: int(_env_float("SESSION_TTS_CHARS", 12000))
+    )
 
     @property
     def has_gnani(self) -> bool:
@@ -91,15 +103,25 @@ class Settings:
 
 settings = Settings()
 
-# Language -> Timbre voice. Voices are configurable because availability per
-# language must be confirmed against the challenge account.
-VOICES = {
-    lang: _env(f"GNANI_VOICE_{lang.split('-')[0].upper()}", default)
-    for lang, default in {
-        "kn-IN": "Nalini",
-        "hi-IN": "Kaveri",
-        "en-IN": "Deepak",
-    }.items()
-}
+# Language -> Timbre voice, read from config/voices.json then overridden by env.
+# Availability per language must still be confirmed against the challenge account.
+def _load_voices() -> dict[str, str]:
+    fallback = {"kn-IN": "Nalini", "hi-IN": "Kaveri", "en-IN": "Deepak"}
+    try:
+        raw = json.loads(VOICE_CATALOG.read_text(encoding="utf-8"))
+        voices = raw.get("voices") if isinstance(raw, dict) else None
+        if isinstance(voices, dict) and voices:
+            fallback.update({str(k): str(v) for k, v in voices.items()})
+    except FileNotFoundError:
+        log.info("config/voices.json missing; using built-in voice names")
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("config/voices.json unreadable (%s); using built-in voice names", exc)
+    return {
+        lang: _env(f"GNANI_VOICE_{lang.split('-')[0].upper()}", default)
+        for lang, default in fallback.items()
+    }
+
+
+VOICES = _load_voices()
 
 SUPPORTED_LANGUAGES = tuple(VOICES.keys())

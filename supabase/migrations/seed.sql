@@ -15,6 +15,13 @@ select
 from generate_series(1, 120) as g
 on conflict (id) do nothing;
 
+-- Two named demo roles for /api/demo-login. Still synthetic, still no password.
+insert into residents (id, community_id, flat_number, language, role)
+values
+  ('res-asha', 'green-residency', 'A-204', 'kn-IN', 'resident'),
+  ('res-admin', 'green-residency', 'Office', 'en-IN', 'admin')
+on conflict (id) do nothing;
+
 insert into demand_requests
   (id, resident_id, community_id, product, qty, frequency, delivery_day, language, status)
 select

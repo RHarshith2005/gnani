@@ -26,11 +26,40 @@ log = logging.getLogger("negoai.gnani")
 
 TTS_HTTP_URL = "https://api.vachana.ai/api/v1/tts/inference"
 
+#: Characters of TTS already paid for in this process. The guard is deliberately
+#: simple: one loop, one counter, and a hard stop that falls back to text.
+_GLOBAL_TTS_CHARS = 0
+
+
+class TTSCreditGuard:
+    """Per-session and global character caps before falling back to text-only."""
+
+    def __init__(self, *, budget: int, session_cap: int) -> None:
+        self.budget = max(0, int(budget))
+        self.session_cap = max(0, int(session_cap))
+        self.spent = 0
+        self.exhausted = False
+
+    def allow(self, characters: int) -> bool:
+        global _GLOBAL_TTS_CHARS
+        if self.exhausted or characters <= 0:
+            return False
+        if self.spent + characters > self.session_cap:
+            self.exhausted = True
+            return False
+        if _GLOBAL_TTS_CHARS + characters > self.budget:
+            self.exhausted = True
+            return False
+        self.spent += characters
+        _GLOBAL_TTS_CHARS += characters
+        return True
+
 
 class GnaniTTSService:
     def __init__(self, config: Settings | None = None) -> None:
         self.config = config or default_settings
         self._client: Optional[httpx.AsyncClient] = None
+        self._cache: dict[tuple[str, str, str], bytes] = {}
 
     @property
     def enabled(self) -> bool:
@@ -39,14 +68,31 @@ class GnaniTTSService:
     def voice_for(self, language: str) -> str:
         return VOICES.get(language) or VOICES.get("en-IN", "Deepak")
 
-    async def synthesize(self, text: str, language: str = "en-IN") -> Optional[bytes]:
+    def distinct_voice(self, language: str, preferred: str) -> str:
+        """Keep the vendor audibly different from NegoAI when a name collides."""
+        default = self.voice_for(language)
+        if preferred and preferred != default:
+            return preferred
+        for candidate in VOICES.values():
+            if candidate != default:
+                return candidate
+        return preferred or default
+
+    async def synthesize(
+        self, text: str, language: str = "en-IN", *, voice: Optional[str] = None
+    ) -> Optional[bytes]:
         """Return raw PCM16 (16 kHz mono) or ``None`` when unavailable."""
         if not self.enabled or not text:
             return None
+        voice = voice or self.voice_for(language)
+        key = (text, language, voice)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
         payload = {
             "text": text,
             "language": language,
-            "voice": self.voice_for(language),
+            "voice": voice,
             "model": self.config.gnani_tts_model,
             "sample_rate": self.config.gnani_sample_rate,
             "encoding": "pcm_s16le",
@@ -62,6 +108,7 @@ class GnaniTTSService:
             response.raise_for_status()
             ctype = response.headers.get("content-type", "")
             if ctype.startswith("audio/") or ctype == "application/octet-stream":
+                self._remember(key, response.content)
                 return response.content
             # Some deployments wrap audio in JSON.
             try:
@@ -71,18 +118,29 @@ class GnaniTTSService:
             audio = data.get("audio") or data.get("audio_base64") or data.get("pcm")
             if isinstance(audio, str):
                 try:
-                    return base64.b64decode(audio)
+                    pcm = base64.b64decode(audio)
                 except Exception:
                     return None
+                self._remember(key, pcm)
+                return pcm
             url = data.get("audio_url")
             if isinstance(url, str):
                 audio_response = await self._client.get(url)
                 audio_response.raise_for_status()
+                self._remember(key, audio_response.content)
                 return audio_response.content
         except Exception as exc:
             log.warning("Timbre TTS failed (%s); browser speech will fill in", exc)
             return None
         return None
+
+    def _remember(self, key: tuple[str, str, str], audio: bytes) -> None:
+        """Cache fixed lines (disclosure, greetings) to save latency and credits."""
+        if not audio:
+            return
+        if len(self._cache) >= 128:
+            self._cache.clear()
+        self._cache[key] = audio
 
     async def aclose(self) -> None:
         if self._client is not None:

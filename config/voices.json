@@ -1,0 +1,8 @@
+{
+  "_comment": "Timbre voice per language. Confirm names against your Gnani Voice Catalog; env GNANI_VOICE_<LANG> overrides these.",
+  "voices": {
+    "kn-IN": "Nalini",
+    "hi-IN": "Kaveri",
+    "en-IN": "Deepak"
+  }
+}

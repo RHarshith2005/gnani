@@ -155,7 +155,6 @@ scripts/
 ### Backend
 
 ```bash
-cd d:/gnani
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r api/requirements.txt
 .venv/Scripts/python.exe -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
@@ -164,7 +163,7 @@ python -m venv .venv
 ### Frontend
 
 ```bash
-cd d:/gnani/web
+cd web
 npm install
 npm run dev -- --host 0.0.0.0
 ```
@@ -177,7 +176,7 @@ Then open:
 ### Single-process mode
 
 ```bash
-cd d:/gnani/web
+cd web
 npm run build
 cd ..
 .venv/Scripts/python.exe -m uvicorn api.main:app --host 0.0.0.0 --port 8000
@@ -201,8 +200,9 @@ By default it falls back to browser speech recognition and synthesis. Optional G
 ## ✅ Testing
 
 ```bash
-cd d:/gnani
 .venv/Scripts/python.exe -m pytest api/tests -q
+python scripts/run_negotiation.py
+python scripts/ws_client.py --mode guided
 ```
 
 The suite covers:
@@ -236,6 +236,91 @@ That is the real value of NegoAI.
 - external AI or voice services are optional for the demo flow
 
 ---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+  subgraph Browser
+    mic[Mic → AudioWorklet → 16 kHz PCM]
+    orb[FurTorus orb]
+    ui[Console · Room · Admin · Replay]
+  end
+  subgraph API[FastAPI gateway]
+    ws[/ws/voice/]
+    intake[Resident intake]
+    engine[Negotiation engine]
+    guard[Guard rails]
+    events[(Append-only events)]
+  end
+  subgraph Gnani
+    stt[Prisma STT]
+    tts[Timbre v2.5]
+  end
+  mic --> ws
+  ws --> stt
+  stt --> intake
+  intake --> engine
+  engine --> guard
+  guard --> tts
+  tts --> ws
+  ws --> ui
+  engine --> events
+  ui --> events
+```
+
+One brain, many channels. The browser mic, typed text and the guided demo all
+reach the same `VoiceSession` over one WebSocket. Vendor floors, target prices
+and committee ceilings never cross the wire.
+
+## 🎙️ Gnani models used
+
+| Capability | Model / endpoint | Where |
+| --- | --- | --- |
+| Speech to text | Prisma realtime, `wss://api.vachana.ai/stt/v3/stream` | `api/speech/gnani.py` |
+| Text to speech | Timbre v2.5 (`timbre-v2.5`), `POST /api/v1/tts/inference` | `api/speech/gnani.py` |
+| Voice catalog | language → voice names in `config/voices.json` | `api/config.py` |
+| Auth | `X-API-Key-ID`, server only | `api/config.py` |
+
+The Gnani key is read from `GNANI_API_KEY`/`GNANI_KEY_ID` on the server and is
+never sent to the browser. Without a key the app still runs with the scripted
+composer and browser speech.
+
+## 🌐 Languages actually tested
+
+The deterministic text flows, number spelling and parsing are tested in
+**Kannada, Hindi and English**, including code-mixed input. Real Prisma/Timbre
+voice calls were **not** exercised in this workspace because no challenge key
+was present; `scripts/smoke_test.py` is the first check to run when it is. The
+language chips expose the three languages above.
+
+## 👥 Team contribution
+
+Solo build. Design and UI, voice gateway, resident intake, negotiation engine,
+personas, persistence, screens and tests were all written for this entry.
+
+## ⚠️ Limitations
+
+- Vendors are simulated personas with hidden floors; no real supplier is called.
+- Water cans are the default product; milk and vegetables are configurable but
+  less exercised.
+- Local storage is SQLite; the Supabase migrations exist but are not required
+  for the demo.
+- Telephony is out of MVP scope: the phone button is disabled.
+- The Gnani STT/TTS payloads follow the blueprint's documented endpoints but
+  must be confirmed against the challenge account.
+- No payments, contracts, delivery tracking or real signup.
+
+## 🤖 LLM disclosure
+
+An LLM is optional (`LLM_PROVIDER`-style OpenAI-compatible endpoint). When
+configured it may only *rephrase* a turn; every number comes from the engine,
+and any price in its output that is not in the engine directive or the
+transcript is rejected. With no LLM key, a deterministic composer writes the
+same lines. Model name and temperature live in `api/config.py`.
+
+Submission material: `docs/submission.md`, QA runbook in `scripts/qa.md`, results
+in `docs/qa.md`.
 
 ## 🏁 Built for the challenge
 

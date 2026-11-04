@@ -43,6 +43,10 @@ export default function NegotiationRoom() {
   const lines = useSession((s) => s.lines)
   const community = useSession((s) => s.community)
   const language = useSession((s) => s.language)
+  const phase = useSession((s) => s.phase)
+  const control = useSession((s) => s.control)
+  const paused = control?.action === 'paused'
+  const negotiating = Boolean(negotiation) && phase === 'negotiation'
 
   const vendorList = Object.values(vendors).sort(
     (a, b) => (a.quote?.unit_price ?? 999) - (b.quote?.unit_price ?? 999),
@@ -184,6 +188,33 @@ export default function NegotiationRoom() {
       </div>
 
       <div className="panel__foot">
+        <div className="room__controls">
+          <button
+            type="button"
+            className="btn-outline btn-outline--ink"
+            onClick={() => (paused ? voice.resume() : voice.pause())}
+            disabled={!negotiating}
+          >
+            {paused ? 'Resume' : 'Pause'}
+          </button>
+          <button
+            type="button"
+            className="btn-outline btn-outline--ink"
+            onClick={() => voice.skip()}
+            disabled={!negotiating}
+          >
+            Skip supplier
+          </button>
+          <button
+            type="button"
+            className="btn-outline btn-outline--ink"
+            onClick={() => voice.stop()}
+            disabled={!negotiating}
+          >
+            Stop
+          </button>
+          <span className="pill">{paused ? 'Paused' : negotiating ? 'Playing' : phase}</span>
+        </div>
         <div className="speakers">
           <span className={`speaker ${agentSpeaking ? 'is-on' : ''}`}>
             <span className={`mini-orb ${orb === 'speaking' ? 'is-speaking' : ''}`} />
