@@ -108,10 +108,12 @@ This ladder is why the demo can be recorded on any machine.
 
 ## 7. Latency budget
 
-Blueprint target: end-of-speech → first audio under ~1.5 s. Current design keeps the LLM off the
-critical path by default (the composer emits immediately), streams TTS per sentence, and chats over
-one warm socket. Budget: VAD 0.3–0.5 s, phrasing 0–0.9 s, first TTS audio ≤0.4 s. Greetings are
-static strings so they can be pre-rendered and cached per language.
+Measured on 9 Nov 2026 with the live key: Timbre REST returns a full 2–3 s sentence in roughly
+1.5–2.5 s, and Prisma emits one final transcript per VAD segment after the configured 700 ms of
+silence. The LLM stays off the critical path by default (the composer emits immediately), and Prisma
+VAD tuning is exposed through env headers. The blueprint's sub-1.5 s target needs streaming TTS
+(`wss://api.vachana.ai/api/v1/tts`), which is the next latency step; greetings are still cached per
+language by `GnaniTTSService`.
 
 ## 8. Data model
 
@@ -143,10 +145,11 @@ for `negotiation_events` and `vendor_offers`.
 - No number in the UI comes from a language model.
 - Vendors are labelled simulated on every screen and stored with `source = simulated`.
 - The agent identifies itself as an AI in its first sentence of every negotiation.
+- `GET /api/sessions/{id}/receipt` recomputes a SHA-256 chain over the append-only events; the committee can keep the chain head as proof, and any later edit changes it.
 
 ## 11. What to build next
 
-1. Confirm Prisma/Timbre payload shapes on the challenge account; cache pre-rendered greetings.
+1. Stream TTS over `wss://api.vachana.ai/api/v1/tts` so first audio arrives in well under a second; keep the REST path as the fallback.
 2. Move the store to Supabase and let the room subscribe to realtime instead of the socket.
 3. Telephony: the same session behind an outbound SIP leg, one vendor per call.
 4. Payment terms and contracts as a fourth negotiation lever.

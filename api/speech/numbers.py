@@ -237,7 +237,11 @@ def parse_number(text: str, lang: str = "en-IN") -> Optional[int]:
     total = 0
     current = 0
     found = False
+    gap = False
     for token in tokens:
+        # "one hundred and twenty" is one group; "and" must not split it.
+        if token in {"and", "plus", "और", "मತ್ತು"}:
+            continue
         value = None
         if token in _HUNDREDS:
             value = 100
@@ -249,7 +253,14 @@ def parse_number(text: str, lang: str = "en-IN") -> Optional[int]:
                     value = candidate[token]
                     break
         if value is None:
+            if found:
+                gap = True
             continue
+        if found and gap:
+            # A second separated group is a restatement ("three cans ... three
+            # cans"), not an addition. The first quantity wins.
+            break
+        gap = False
         found = True
         if value == 100:
             current = (current or 1) * 100

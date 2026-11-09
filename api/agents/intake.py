@@ -225,7 +225,8 @@ class IntakeState:
             lower = text.lower()
             day = next((value for key, value in DAY_ALIASES.items() if key in lower), None)
             if day is None:
-                if not text or len(text) > 40:
+                # A repeated demand (or background talker) is not a weekday.
+                if self._product_from(text) or not text or len(text) > 40:
                     say, sub = self._question("delivery_day")
                     return IntakeReply("ask", say, sub, self.stage, self.slots())
                 day = text[:40]
@@ -235,6 +236,9 @@ class IntakeState:
             return IntakeReply("ask", say, sub, self.stage, self.slots())
 
         if self.stage == "flat":
+            if self._product_from(text):
+                say, sub = self._question("flat")
+                return IntakeReply("ask", say, sub, self.stage, self.slots())
             flat = self._flat(text) or (text[:12].upper() if text else None)
             if not flat:
                 say, sub = self._question("flat")

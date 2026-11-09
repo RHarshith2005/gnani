@@ -20,6 +20,7 @@ export default function Replay() {
   const [cursor, setCursor] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [error, setError] = useState(null)
+  const [receipt, setReceipt] = useState(null)
   const timer = useRef(0)
 
   useEffect(() => {
@@ -49,6 +50,25 @@ export default function Replay() {
       })
       .catch((err) => {
         if (!cancelled) setError(err.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [active])
+
+  useEffect(() => {
+    if (!active) {
+      setReceipt(null)
+      return
+    }
+    let cancelled = false
+    fetch(`${API}/api/sessions/${active.id}/receipt`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data) => {
+        if (!cancelled) setReceipt(data)
+      })
+      .catch(() => {
+        if (!cancelled) setReceipt(null)
       })
     return () => {
       cancelled = true
@@ -155,6 +175,23 @@ export default function Replay() {
                 <span className="pill">Last quote {inr(latest.payload.unit_price)}</span>
               ) : null}
             </div>
+
+            {receipt ? (
+              <div className="replay__controls">
+                <span className="pill">Tamper-evident · {receipt.event_count} events</span>
+                <span className="pill">Savings {inr(receipt.savings)}</span>
+                <span className="pill" title={receipt.chain_head}>
+                  sha256 {String(receipt.chain_head).slice(0, 12)}…
+                </span>
+                <button
+                  type="button"
+                  className="btn-outline"
+                  onClick={() => navigator.clipboard?.writeText(receipt.chain_head)}
+                >
+                  Copy proof
+                </button>
+              </div>
+            ) : null}
 
             <div className="replay__events">
               {visible.map((event, i) => (

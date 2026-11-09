@@ -12,6 +12,16 @@ ROOT = Path(__file__).resolve().parent
 VOICE_CATALOG = ROOT.parent / "config" / "voices.json"
 log = logging.getLogger("negoai.config")
 
+# Load api/.env for local runs and uvicorn. Tests set NEGOAI_NO_DOTENV=1 so a
+# developer key on the box can never leak into the key-free test suite.
+if not os.environ.get("NEGOAI_NO_DOTENV"):
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(ROOT / ".env")
+    except Exception:  # python-dotenv absent: plain environment variables
+        pass
+
 
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
@@ -31,6 +41,36 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _default_database_path() -> str:
+    """Vercel's filesystem is read-only except for /tmp, so keep the store there."""
+    if os.environ.get("VERCEL"):
+        return "/tmp/negoai.sqlite3"
+    return str(ROOT / "negoai.sqlite3")
+
+
+def _env_list(name: str, default: list[str]) -> list[str]:
+    raw = _env(name)
+    if not raw:
+        return list(default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+#: Domain vocabulary sent as Prisma keyterms so product words are favoured.
+DEFAULT_STT_KEYTERMS = [
+    "NegoAI",
+    "water can",
+    "society",
+    "delivery",
+    "milk",
+    "vegetables",
+    "ಕ್ಯಾನ್",
+    "ನೀರು",
+    "पानी",
+    "कैन",
+    "दूध",
+]
+
+
 @dataclass
 class Settings:
     """Everything the gateway needs, resolved once at import time."""
@@ -44,8 +84,31 @@ class Settings:
     gnani_tts_url: str = field(
         default_factory=lambda: _env("GNANI_TTS_URL", "wss://api.vachana.ai/api/v1/tts")
     )
-    gnani_tts_model: str = field(default_factory=lambda: _env("GNANI_TTS_MODEL", "timbre-v2.5"))
+    gnani_tts_model: str = field(default_factory=lambda: _env("GNANI_TTS_MODEL", "timbre-v3.0"))
+    gnani_tts_speed: float = field(default_factory=lambda: _env_float("GNANI_TTS_SPEED", 1.0))
     gnani_sample_rate: int = field(default_factory=lambda: int(_env_float("GNANI_SAMPLE_RATE", 16000)))
+    gnani_stt_model: str = field(default_factory=lambda: _env("GNANI_STT_MODEL", "prisma-v3.0"))
+
+    # Prisma VAD tuning (headers at handshake). These defaults favour complete
+    # sentences from a laptop mic over the fastest possible transcript.
+    gnani_vad_threshold: float = field(
+        default_factory=lambda: _env_float("GNANI_VAD_THRESHOLD", 0.6)
+    )
+    gnani_min_silence_ms: int = field(
+        default_factory=lambda: int(_env_float("GNANI_MIN_SILENCE_MS", 700))
+    )
+    gnani_min_speech_ms: int = field(
+        default_factory=lambda: int(_env_float("GNANI_MIN_SPEECH_MS", 150))
+    )
+    gnani_stt_topic: str = field(
+        default_factory=lambda: _env(
+            "GNANI_STT_TOPIC",
+            "apartment society bulk purchase of water cans, milk and vegetables",
+        )
+    )
+    gnani_stt_keyterms: list[str] = field(
+        default_factory=lambda: _env_list("GNANI_STT_KEYTERMS", DEFAULT_STT_KEYTERMS)
+    )
 
     # Optional LLM. Any OpenAI-compatible endpoint works (OpenAI, Groq, Ollama,
     # vLLM); without a key the deterministic scripted composer speaks instead.
@@ -59,9 +122,16 @@ class Settings:
 
     # Supabase is the production store; SQLite is the zero-config local store.
     supabase_url: str = field(default_factory=lambda: _env("SUPABASE_URL"))
-    supabase_service_key: str = field(default_factory=lambda: _env("SUPABASE_SERVICE_KEY"))
+    # New-style secret key first, legacy service-role name as a fallback.
+    supabase_service_key: str = field(
+        default_factory=lambda: _env("SUPABASE_SECRET_KEY") or _env("SUPABASE_SERVICE_KEY")
+    )
+    supabase_publishable_key: str = field(
+        default_factory=lambda: _env("SUPABASE_PUBLISHABLE_KEY")
+    )
+    supabase_db_url: str = field(default_factory=lambda: _env("SUPABASE_DB_URL"))
     database_path: str = field(
-        default_factory=lambda: _env("NEGOAI_DB", str(ROOT / "negoai.sqlite3"))
+        default_factory=lambda: _env("NEGOAI_DB") or _default_database_path()
     )
 
     demo_pace: float = field(default_factory=lambda: _env_float("DEMO_PACE", 0.55))
@@ -97,31 +167,46 @@ class Settings:
             "stt": self.stt_mode,
             "tts": self.tts_mode,
             "llm": "llm" if self.has_llm else "scripted",
+            "stt_model": self.gnani_stt_model,
             "tts_model": self.gnani_tts_model,
         }
 
 
 settings = Settings()
 
-# Language -> Timbre voice, read from config/voices.json then overridden by env.
-# Availability per language must still be confirmed against the challenge account.
-def _load_voices() -> dict[str, str]:
-    fallback = {"kn-IN": "Nalini", "hi-IN": "Kaveri", "en-IN": "Deepak"}
+# Language -> Timbre v3.0 agent voice plus distinct vendor voices. Read from
+# config/voices.json; GNANI_VOICE_<LANG> overrides the agent voice. Every v3.0
+# voice speaks all three languages, so one identity holds across a language switch.
+def _load_voice_catalog() -> tuple[dict[str, str], dict[str, list[str]]]:
+    agents = {"kn-IN": "Shivani", "hi-IN": "Shivani", "en-IN": "Shivani"}
+    vendors = {
+        lang: ["Avinash", "Devansh", "Prakash"] for lang in agents
+    }
     try:
         raw = json.loads(VOICE_CATALOG.read_text(encoding="utf-8"))
         voices = raw.get("voices") if isinstance(raw, dict) else None
-        if isinstance(voices, dict) and voices:
-            fallback.update({str(k): str(v) for k, v in voices.items()})
+        if isinstance(voices, dict):
+            for lang, value in voices.items():
+                if isinstance(value, dict):
+                    agent = value.get("agent")
+                    if isinstance(agent, str) and agent:
+                        agents[str(lang)] = agent
+                    names = value.get("vendors")
+                    if isinstance(names, list) and names:
+                        vendors[str(lang)] = [str(name) for name in names]
+                else:
+                    agents[str(lang)] = str(value)
     except FileNotFoundError:
         log.info("config/voices.json missing; using built-in voice names")
     except (OSError, json.JSONDecodeError) as exc:
         log.warning("config/voices.json unreadable (%s); using built-in voice names", exc)
-    return {
+    agents = {
         lang: _env(f"GNANI_VOICE_{lang.split('-')[0].upper()}", default)
-        for lang, default in fallback.items()
+        for lang, default in agents.items()
     }
+    return agents, vendors
 
 
-VOICES = _load_voices()
+VOICES, VENDOR_VOICES = _load_voice_catalog()
 
 SUPPORTED_LANGUAGES = tuple(VOICES.keys())

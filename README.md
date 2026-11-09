@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Gnani.ai-Internship%20Challenge-6D28D9?style=flat-square" alt="Gnani.ai internship challenge" />
   <img src="https://img.shields.io/badge/Voice-Kannada%20%C2%B7%20Hindi%20%C2%B7%20English-F59E0B?style=flat-square" alt="Kannada, Hindi and English" />
   <img src="https://img.shields.io/badge/Engine-deterministic-059669?style=flat-square" alt="Deterministic negotiation engine" />
-  <img src="https://img.shields.io/badge/Tests-47%20passing-2563EB?style=flat-square" alt="47 tests passing" />
+  <img src="https://img.shields.io/badge/Tests-74%20passing-2563EB?style=flat-square" alt="74 tests passing" />
   <img src="https://img.shields.io/badge/Stack-React%20%2B%20FastAPI-0EA5E9?style=flat-square" alt="React and FastAPI" />
 </p>
 
@@ -58,7 +58,7 @@ The committee sees the verified demand, best eligible offer, weekly savings and 
 
 <img src="docs/screenshots/replay.jpg" alt="NegoAI replay screen showing the append-only negotiation event log for an escalated vendor round" width="100%" />
 
-Every offer, directive and decision is an append-only event row, so the whole negotiation replays exactly — no re-simulation, no made-up history.
+Every offer, directive and decision is an append-only event row, so the whole negotiation replays exactly — no re-simulation, no made-up history. The same screen shows the session's tamper-evident SHA-256 receipt, so a committee can keep the proof next to the decision.
 
 ### On a phone
 
@@ -142,8 +142,8 @@ One brain, many channels: the browser mic, typed text and the guided demo all re
 | Piece | Implementation |
 | --- | --- |
 | Capture | `getUserMedia` → AudioWorklet → linear resample to 16 kHz mono PCM16 |
-| Speech in | Gnani Prisma realtime STT over `wss://api.vachana.ai/stt/v3/stream` |
-| Speech out | Gnani Timbre v2.5 over `POST /api/v1/tts/inference`, streamed back as PCM |
+| Speech in | Gnani Prisma v3.0 realtime STT over `wss://api.vachana.ai/stt/v3/stream`; language, model, VAD and domain keyterms travel as handshake headers |
+| Speech out | Gnani Timbre v3.0 over `POST /api/v1/tts/inference` with `container: raw`, returned as 16 kHz PCM16 |
 | Fallback | Browser `SpeechRecognition` + `SpeechSynthesis`; scripted composer when no key |
 | Numbers | Digits and rupee signs are spelled out in the active language before TTS |
 | Barge-in | Speaking while the agent talks stops playback and returns to listening |
@@ -153,12 +153,13 @@ One brain, many channels: the browser mic, typed text and the guided demo all re
 
 | Capability | Model / endpoint | Where |
 | --- | --- | --- |
-| Speech to text | Prisma realtime, `wss://api.vachana.ai/stt/v3/stream` | `api/speech/gnani.py` |
-| Text to speech | Timbre v2.5 (`timbre-v2.5`), `POST /api/v1/tts/inference` | `api/speech/gnani.py` |
-| Voice catalog | language → voice names | `config/voices.json` |
+| Speech to text | Prisma v3.0 (`prisma-v3.0`), `wss://api.vachana.ai/stt/v3/stream` | `api/speech/gnani.py` |
+| Text to speech | Timbre v3.0 (`timbre-v3.0`), `POST /api/v1/tts/inference`, raw PCM out | `api/speech/gnani.py` |
+| Voice catalog | one agent voice + three distinct vendor voices, all three languages | `config/voices.json` |
+| Domain tuning | `topic` + `keyterms` + VAD headers at handshake | `api/config.py`, `api/speech/gnani.py` |
 | Auth | `X-API-Key-ID`, server only | `api/config.py` |
 
-The key is read from `GNANI_API_KEY` / `GNANI_KEY_ID` on the server and is never sent to the browser or logged.
+The key is read from `GNANI_API_KEY` / `GNANI_KEY_ID` on the server and is never sent to the browser or logged. `api/.env` is gitignored and loaded automatically at startup.
 
 ## Safety properties
 
@@ -168,6 +169,7 @@ The key is read from `GNANI_API_KEY` / `GNANI_KEY_ID` on the server and is never
 - **Vendors are labelled.** Every vendor row stores `source = simulated`; the badge appears on the room and admin screens.
 - **AI disclosure first.** NegoAI introduces itself as an AI at the start of every negotiation.
 - **Append-only audit.** A database trigger rejects updates and deletes on `negotiation_events`.
+- **Tamper-evident receipt.** `GET /api/sessions/{id}/receipt` hashes every stored event into a SHA-256 chain. Edit or delete one row and the chain head the committee kept no longer matches.
 
 ## Tech stack
 
@@ -176,8 +178,8 @@ The key is read from `GNANI_API_KEY` / `GNANI_KEY_ID` on the server and is never
 | Frontend | React 18, Vite 6, zustand, framer-motion, Three.js |
 | Visuals | Container-query CSS, frosted glass, custom fur shader, Poppins + Oswald |
 | Backend | FastAPI, Uvicorn, asyncio WebSockets |
-| Voice | Gnani Prisma (STT) + Timbre (TTS), with browser fallback |
-| Storage | SQLite locally; Supabase Postgres schema + RLS + Realtime migrations included |
+| Voice | Gnani Prisma v3.0 (STT) + Timbre v3.0 (TTS), with browser fallback |
+| Storage | SQLite locally; Supabase project wired (publishable + secret keys); Postgres schema/RLS/Realtime migration included |
 | AI | Optional OpenAI-compatible LLM for rephrasing only |
 
 ## Quick start
@@ -202,6 +204,8 @@ Open **http://localhost:5173**. The API docs are at **http://localhost:8000/docs
 
 The app runs with **zero keys**: the scripted composer and browser speech keep every flow working. Add a Gnani key to `api/.env` to switch STT and TTS to Prisma + Timbre.
 
+Supabase is optional. Put the project's Postgres URI in `SUPABASE_DB_URL`, run `python scripts/apply_supabase.py`, and the schema, RLS, realtime publication and synthetic seed are applied and verified over PostgREST.
+
 ### Single-process mode
 
 ```bash
@@ -224,12 +228,26 @@ Open **`http://localhost:8000/?demo=1`** (or `/room?demo=1`) and press **Start d
 | `/replay` | Stored negotiation from the event log |
 | `?demo=1` | Guided end-to-end run |
 
+## Deploy on Vercel
+
+The repo ships a Vercel-ready shape: `app.py` is the Python entrypoint, `vercel.json` builds `web/dist`, and Vercel routes REST and `/ws/voice` to one FastAPI function. WebSockets need Fluid Compute (on by default) and stay open until the function duration limit.
+
+Set these in **Project Settings → Environment Variables**: `GNANI_API_KEY`, `GNANI_STT_MODEL`, `GNANI_TTS_MODEL`, and optionally `LLM_API_KEY` and the `SUPABASE_*` keys. Do **not** set `NEGOAI_DB`: Vercel's filesystem is read-only except `/tmp`, so the store automatically moves to `/tmp/negoai.sqlite3` there.
+
+Known platform limits: a socket closes at the function duration (300 s on Hobby, configurable up to 800 s on Pro), and the `/tmp` SQLite file is per-instance and ephemeral — a replay request can land on another instance. Use Supabase for durable multi-instance state. The config and entrypoint are validated locally; the deploy itself was not run from this workspace.
+
+```bash
+npx vercel            # preview
+npx vercel --prod     # production
+```
+
 ## Project layout
 
 ```text
 api/
   main.py                 FastAPI app, REST endpoints, SPA hosting
   db.py                   SQLite store, idempotent seed, aggregates
+  receipt.py              SHA-256 chain over stored negotiation events
   config.py               env, voices.json, credit budget
   agents/
     intake.py             resident demand collector
@@ -259,6 +277,8 @@ web/
   public/worklets/        PCM capture worklet
 
 config/voices.json        language → Timbre voice
+app.py                    Vercel Python entrypoint (re-exports api.main:app)
+vercel.json               Vercel build, SPA and function duration
 supabase/migrations/      schema, RLS, realtime, synthetic seed
 scripts/                  smoke_test, run_negotiation, ws_client,
                           capture_screenshots, qa.md
@@ -268,24 +288,26 @@ docs/                     screenshots, QA log, submission pack
 ## Tests and scripts
 
 ```bash
-python -m pytest api/tests -q          # 47 passed
+python -m pytest api/tests -q          # 74 passed, no keys needed
+python scripts/smoke_test.py           # live Timbre → Prisma roundtrip in kn/hi/en
 python scripts/run_negotiation.py      # three personas, text mode, stores offers
 python scripts/ws_client.py --mode guided
+cd web && npm test                     # 6 reducer/format checks (node:test)
 ```
 
 `run_negotiation.py` finishes in seconds and prints per-round prices. `ws_client.py` drives the real `/ws/voice` socket and prints the same events the browser receives.
 
-**What is verified:** engine math and guardrails, intake in three languages plus code-mixing, number spelling, full guided demo, API/health without secrets, demand aggregation **360 → 363**, the production build, and a 203-event negotiation over a live WebSocket.
+**What is verified:** 74 Python tests plus 6 Node reducer/format checks; engine math and guardrails, intake in three languages plus code-mixing, number spelling, composer output, PCM transport, LLM JSON extraction, SQLite persistence and idempotent seed, the real `/ws/voice` protocol (guided run plus typed intake and language switch), API/health without secrets, demand aggregation **360 → 363**, the tamper-evident receipt chain, the production build, and a **live Gnani TTS → STT roundtrip in Kannada, Hindi and English** (`python scripts/smoke_test.py` prints PASS).
 
-**What is not:** real Gnani audio (no challenge key in this workspace), noisy-audio and interruption tests on a physical phone, and Supabase deployment. These are recorded honestly in [`docs/qa.md`](docs/qa.md); [`scripts/qa.md`](scripts/qa.md) is the runbook for closing them.
+**What is not:** human-mic accuracy in a noisy room, interruption behaviour on a physical phone, and the Supabase schema deployment (the project is connected but its tables are not applied yet). These are recorded honestly in [`docs/qa.md`](docs/qa.md); [`scripts/qa.md`](scripts/qa.md) is the runbook for closing them.
 
 ## Languages
 
 | Language | Text flows | Number words | Real Gnani voice |
 | --- | --- | --- | --- |
-| Kannada `kn-IN` | Tested | Tested | Not exercised |
-| Hindi `hi-IN` | Tested | Tested | Not exercised |
-| English `en-IN` | Tested | Tested | Not exercised |
+| Kannada `kn-IN` | Tested | Tested | Verified (live roundtrip) |
+| Hindi `hi-IN` | Tested | Tested | Verified (live roundtrip) |
+| English `en-IN` | Tested | Tested | Verified (live roundtrip) |
 | Code-mixed | Tested | — | — |
 
 Language chips switch the agent, number words, TTS voice and confirm card together.
@@ -311,7 +333,7 @@ A CSS conic-gradient fallback appears when WebGL is unavailable, and `prefers-re
 - Water cans are the default product; milk and vegetables are configurable but less exercised.
 - Local storage is SQLite. Supabase migrations are included and reviewed but not required for the demo.
 - Telephony is out of scope: the phone button is disabled with a "coming soon" tooltip.
-- The Gnani STT/TTS payloads follow the documented endpoints but must be confirmed against the challenge account.
+- Voice accuracy is verified with synthesized Timbre audio fed back through Prisma, not a human microphone; real-room noise is still untested.
 - Multi-item utterances ("three cans and two litres of milk") are not yet collected in one turn.
 - No payments, contracts, delivery tracking or real signup. `/api/demo-login` issues demo roles only.
 

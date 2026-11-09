@@ -1,8 +1,17 @@
 {
-  "_comment": "Timbre voice per language. Confirm names against your Gnani Voice Catalog; env GNANI_VOICE_<LANG> overrides these.",
+  "_comment": "Timbre v3.0: every voice speaks Kannada, Hindi and English, so one agent identity and three distinct vendor voices hold across languages. Verify names against the Gnani Voice Catalog; env GNANI_VOICE_<LANG> overrides the agent voice.",
   "voices": {
-    "kn-IN": "Nalini",
-    "hi-IN": "Kaveri",
-    "en-IN": "Deepak"
+    "kn-IN": {
+      "agent": "Shivani",
+      "vendors": ["Avinash", "Devansh", "Prakash"]
+    },
+    "hi-IN": {
+      "agent": "Shivani",
+      "vendors": ["Avinash", "Devansh", "Prakash"]
+    },
+    "en-IN": {
+      "agent": "Shivani",
+      "vendors": ["Avinash", "Devansh", "Prakash"]
+    }
   }
 }

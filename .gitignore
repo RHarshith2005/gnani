@@ -11,4 +11,5 @@ api/negoai.sqlite3
 api/negoai.sqlite3-wal
 api/negoai.sqlite3-shm
 out.wav
+out_*.wav
 .DS_Store

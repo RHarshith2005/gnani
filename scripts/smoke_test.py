@@ -1,24 +1,25 @@
-"""One Kannada STT call and one Kannada TTS call against the real APIs.
+"""Live Gnani roundtrip: synthesize with Timbre, transcribe with Prisma.
 
     python scripts/smoke_test.py
 
-Requires GNANI_API_KEY (or GNANI_KEY_ID) in the environment or api/.env.
-The STT leg streams a synthetic tone — it proves auth and the socket, not
-recognition quality. TTS output is written next to this script as out.wav.
+Reads GNANI_API_KEY from ``api/.env`` or the environment and exercises the
+same clients the app uses (``GnaniTTSService`` / ``GnaniSTTStream``), in
+Kannada, Hindi and English. Saved audio: ``out_kn.wav``, ``out_hi.wav``,
+``out_en.wav``. Exits non-zero if any language returns no audio or no
+transcript.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
-import os
 import sys
+import time
 import wave
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -27,16 +28,18 @@ try:
 except Exception:
     pass
 
-import httpx
+from api.config import Settings  # noqa: E402
+from api.speech.gnani import GnaniSTTStream, GnaniTTSService  # noqa: E402
 
-STT_URL = os.environ.get("GNANI_STT_URL", "wss://api.vachana.ai/stt/v3/stream")
-TTS_URL = "https://api.vachana.ai/api/v1/tts/inference"
-KEY = os.environ.get("GNANI_KEY_ID") or os.environ.get("GNANI_API_KEY", "")
-LANG = "kn-IN"
-VOICE = os.environ.get("GNANI_VOICE_KN", "Nalini")
+TEXTS = {
+    "kn-IN": "ನಮಸ್ಕಾರ! ಇದು ನೆಗೋಎಐ ಧ್ವನಿ ಪರೀಕ್ಷೆ. ನಮಗೆ ವಾರಕ್ಕೆ ಮೂರು ನೂರು ಅರವತ್ತು ನೀರಿನ ಕ್ಯಾನ್ ಬೇಕು.",
+    "hi-IN": "नमस्ते! यह नेगोएआई की आवाज़ परीक्षा है। हमें हर हफ्ते तीन सौ साठ पानी के कैन चाहिए।",
+    "en-IN": "Hello! This is the NegoAI voice test. We need three hundred sixty water cans every week.",
+}
+CODE = {"kn-IN": "kn", "hi-IN": "hi", "en-IN": "en"}
 
 
-def write_wav(path: Path, pcm: bytes, rate: int = 16000) -> None:
+def write_wav(path: Path, pcm: bytes, rate: int) -> None:
     with wave.open(str(path), "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
@@ -44,85 +47,80 @@ def write_wav(path: Path, pcm: bytes, rate: int = 16000) -> None:
         handle.writeframes(pcm)
 
 
-async def tts_call() -> bytes | None:
-    text = "ನಮಸ್ಕಾರ, ಇದು ನೆಗೋಎಐ ಧ್ವನಿ ಪರೀಕ್ಷೆ."
-    payload = {
-        "text": text,
-        "language": LANG,
-        "voice": VOICE,
-        "model": os.environ.get("GNANI_TTS_MODEL", "timbre-v2.5"),
-        "sample_rate": 16000,
-        "encoding": "pcm_s16le",
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            TTS_URL,
-            json=payload,
-            headers={"X-API-Key-ID": KEY, "Content-Type": "application/json"},
-        )
-        print(f"TTS HTTP {response.status_code} ({response.headers.get('content-type')})")
-        if response.status_code >= 400:
-            print(response.text[:400])
-            return None
-        content_type = response.headers.get("content-type", "")
-        if content_type.startswith("audio/") or content_type == "application/octet-stream":
-            return response.content
-        try:
-            data = response.json()
-        except json.JSONDecodeError:
-            return response.content
-        audio = data.get("audio") or data.get("audio_base64") or data.get("pcm")
-        return base64.b64decode(audio) if isinstance(audio, str) else None
+async def transcribe(pcm: bytes, language: str, config: Settings) -> str:
+    finals: list[str] = []
+    errors: list[str] = []
 
+    async def on_partial(text: str) -> None:
+        print(f"   partial: {text}")
 
-async def stt_call() -> None:
-    import websockets
+    async def on_final(text: str) -> None:
+        finals.append(text)
 
-    config = {
-        "type": "config",
-        "language": LANG,
-        "encoding": "pcm_s16le",
-        "sample_rate": 16000,
-        "channels": 1,
-    }
-    async with websockets.connect(
-        STT_URL, additional_headers={"X-API-Key-ID": KEY}, max_size=2**22
-    ) as socket:
-        await socket.send(json.dumps(config))
-        # 0.5 s of a quiet 440 Hz tone, 1024-byte frames as the docs require.
-        import math
-        import struct
+    async def on_error(message: str) -> None:
+        errors.append(message)
 
-        frames = []
-        for index in range(8000):
-            sample = int(1200 * math.sin(2 * math.pi * 440 * index / 16000))
-            frames.append(struct.pack("<h", sample))
-        pcm = b"".join(frames)
+    stream = GnaniSTTStream(
+        language=language,
+        on_partial=on_partial,
+        on_final=on_final,
+        on_error=on_error,
+        config=config,
+    )
+    if not await stream.start():
+        print(f"   STT did not connect: {errors[-1] if errors else 'unknown error'}")
+        return ""
+    try:
+        # Real-time cadence: 1,024 bytes is 32 ms at 16 kHz.
         for offset in range(0, len(pcm), 1024):
-            await socket.send(pcm[offset : offset + 1024])
-        print("STT frames sent; waiting up to 6 s for any server event…")
-        try:
-            message = await asyncio.wait_for(socket.recv(), timeout=6)
-            print("STT event:", str(message)[:300])
-        except asyncio.TimeoutError:
-            print("STT connected and accepted frames (no transcript for a tone, as expected).")
+            await stream.send_audio(pcm[offset : offset + 1024])
+            await asyncio.sleep(0.032)
+        await stream.send_audio(b"\x00" * 1024 * 40)  # silence closes the VAD segment
+        for _ in range(200):
+            if finals or errors:
+                break
+            await asyncio.sleep(0.05)
+    finally:
+        await stream.close()
+    if errors and not finals:
+        print(f"   STT error: {errors[-1]}")
+    return " ".join(finals)
 
 
 async def main() -> int:
-    if not KEY:
-        print("GNANI_API_KEY / GNANI_KEY_ID is not set — nothing to smoke-test.")
-        print("The app still runs: scripted agent + browser voice.")
+    config = Settings()
+    if not config.has_gnani:
+        print("GNANI_API_KEY is not set — add it to api/.env or the environment.")
         return 2
-    print(f"Using language {LANG} and voice {VOICE}")
-    pcm = await tts_call()
-    if pcm:
-        out = ROOT / "out.wav"
-        write_wav(out, pcm)
-        print(f"Saved {len(pcm)} bytes of PCM to {out}")
-    else:
-        print("TTS returned no audio; check the model/voice names on your account.")
-    await stt_call()
-    return 0 if pcm else 1
+    print(
+        f"model={config.gnani_stt_model} / {config.gnani_tts_model} "
+        f"rate={config.gnani_sample_rate}"
+    )
+    tts = GnaniTTSService(config)
+    failures = 0
+    try:
+        for language, text in TEXTS.items():
+            print(f"\n[{language}] {text}")
+            started = time.monotonic()
+            pcm = await tts.synthesize(text, language)
+            if not pcm:
+                print("   TTS returned no audio")
+                failures += 1
+                continue
+            print(
+                f"   TTS {len(pcm)} bytes in {int((time.monotonic() - started) * 1000)} ms"
+            )
+            out = ROOT / f"out_{CODE[language]}.wav"
+            write_wav(out, pcm, config.gnani_sample_rate)
+            transcript = await transcribe(pcm, language, config)
+            if not transcript:
+                failures += 1
+                continue
+            print(f"   STT: {transcript}")
+    finally:
+        await tts.aclose()
+    print("\nPASS" if failures == 0 else f"\nFAIL ({failures} language(s))")
+    return 0 if failures == 0 else 1
 
 
 if __name__ == "__main__":

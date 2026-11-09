@@ -1,0 +1,5 @@
+# Vercel Python runtime dependencies (runtime only; dev/test deps live in api/requirements.txt).
+fastapi==0.115.6
+httpx==0.28.1
+websockets==14.1
+python-dotenv==1.2.4

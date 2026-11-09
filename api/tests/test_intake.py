@@ -63,6 +63,25 @@ def test_misheard_number_asks_again_and_never_guesses():
     assert state.confirmed is False
 
 
+def test_restated_demand_is_not_doubled():
+    state = IntakeState(language="kn-IN")
+    state.handle("ನನಗೆ ವಾರಕ್ಕೆ ಮೂರು ನೀರಿನ ಕ್ಯಾನ್ ಬೇಕು")
+    reply = state.handle("ದಯವಿಟ್ಟು ವಾರಕ್ಕೆ ಮೂರು ಕ್ಯಾನ್ ಕೊಡಿ")
+    assert state.qty == 3
+    assert reply.kind == "confirm"
+    state.handle("ಹೌದು, ಸರಿ")
+    assert state.confirmed is True
+
+
+def test_repeated_demand_is_not_a_delivery_day():
+    state = IntakeState(language="en-IN")
+    state.handle("three water cans")
+    state.handle("yes")
+    reply = state.handle("three water cans every week")
+    assert state.delivery_day is None
+    assert reply.stage == "delivery_day"
+
+
 def test_negation_returns_to_quantity():
     state = IntakeState(language="en-IN")
     state.handle("Three water cans")

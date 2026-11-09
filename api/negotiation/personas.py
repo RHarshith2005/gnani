@@ -27,7 +27,7 @@ class VendorPersona:
     delivery_charge: float
     delivery_days: int
     valid_days: int
-    voice: str = "Nalini"
+    voice: str = "Avinash"
     product: str = "water can"
 
     def to_dict(self) -> dict:
@@ -61,7 +61,7 @@ PERSONAS: tuple[VendorPersona, ...] = (
         delivery_charge=60,
         delivery_days=2,
         valid_days=7,
-        voice="Nalini",
+        voice="Avinash",
     ),
     VendorPersona(
         vendor_id="vendor-friendly",
@@ -76,7 +76,7 @@ PERSONAS: tuple[VendorPersona, ...] = (
         delivery_charge=0,
         delivery_days=1,
         valid_days=5,
-        voice="Kaveri",
+        voice="Devansh",
     ),
     VendorPersona(
         vendor_id="vendor-cheap-slow",
@@ -91,7 +91,7 @@ PERSONAS: tuple[VendorPersona, ...] = (
         delivery_charge=40,
         delivery_days=3,
         valid_days=10,
-        voice="Deepak",
+        voice="Prakash",
     ),
 )
 

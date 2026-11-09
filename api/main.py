@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from . import db
 from .config import settings
 from .negotiation.personas import PERSONAS
+from .receipt import build_receipt
 from .voice.gateway import router as voice_router
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -134,6 +135,24 @@ def session_events(session_id: str) -> dict:
     if not events:
         raise HTTPException(status_code=404, detail="No events for that session")
     return {"session_id": session_id, "events": events}
+
+
+@app.get("/api/sessions/{session_id}/receipt")
+def session_receipt(session_id: str) -> dict:
+    """Tamper-evident receipt: a SHA-256 chain over the stored event log."""
+    negotiation = db.get_negotiation(session_id)
+    events = db.get_events(session_id)
+    if not negotiation or not events:
+        raise HTTPException(status_code=404, detail="No stored negotiation for that session")
+    return build_receipt(
+        negotiation_id=session_id,
+        community=negotiation.get("community") or "Community",
+        product=negotiation.get("product") or "water can",
+        qty=int(negotiation.get("qty") or 0),
+        events=events,
+        offers=db.list_offers(session_id),
+        issued_at=db.now_iso(),
+    )
 
 
 class ApprovalIn(BaseModel):

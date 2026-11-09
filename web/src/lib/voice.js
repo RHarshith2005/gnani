@@ -226,11 +226,8 @@ export const voice = {
   sendText(text) {
     const trimmed = text?.trim()
     if (!trimmed) return
-    useSession.getState().addLine({
-      role: 'resident',
-      text: trimmed,
-      lang: useSession.getState().language,
-    })
+    // The gateway echoes a resident transcript for every message. Adding a
+    // local line here as well made typed input appear twice.
     voiceClient.connect()
     voiceClient.text(trimmed)
   },

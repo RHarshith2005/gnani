@@ -405,6 +405,37 @@ def list_sessions(limit: int = 20) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def get_negotiation(negotiation_id: str) -> Optional[dict[str, Any]]:
+    conn = connect()
+    row = conn.execute(
+        """SELECT n.*, c.name AS community
+           FROM negotiations n
+           LEFT JOIN communities c ON c.id = n.community_id
+           WHERE n.id = ?""",
+        (negotiation_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_offers(negotiation_id: str) -> list[dict[str, Any]]:
+    """Stored offers for one negotiation, in round order (receipt input)."""
+    conn = connect()
+    rows = conn.execute(
+        """SELECT vendor_id, product, unit_price, delivery_charge, min_qty,
+                  valid_days, source, round, eligible, created_at
+           FROM vendor_offers
+           WHERE negotiation_id = ?
+           ORDER BY round, created_at, id""",
+        (negotiation_id,),
+    ).fetchall()
+    offers = []
+    for row in rows:
+        item = dict(row)
+        item["eligible"] = bool(item["eligible"])
+        offers.append(item)
+    return offers
+
+
 def get_events(negotiation_id: str) -> list[dict[str, Any]]:
     conn = connect()
     rows = conn.execute(

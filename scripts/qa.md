@@ -2,9 +2,10 @@
 
 Run this before recording or submitting. Record results in `docs/qa.md`.
 Everything here works with **no keys**: the scripted composer and browser speech
-are the fallback. Re-run the voice rows with `GNANI_API_KEY` set when the key
-arrives, because the Gnani wire format is the one part that cannot be verified
-without the challenge account.
+are the fallback. The Gnani key now lives in `api/.env` (gitignored) and is
+loaded at startup, so the voice rows can be checked live — start with
+`python scripts/smoke_test.py`, which must print PASS for `kn-IN`, `hi-IN` and
+`en-IN` before you exercise the browser mic.
 
 ## 0. Boot
 

@@ -78,7 +78,9 @@ engagement.
 
 ## Pre-submit checklist
 
-- [ ] `pytest api/tests -q` passes.
+- [ ] `pytest api/tests -q` passes (74 cases).
+- [ ] `cd web && npm test` passes (6 checks).
+- [ ] `python scripts/smoke_test.py` prints PASS for Kannada, Hindi and English.
 - [ ] `cd web && npm run build` passes.
 - [ ] `python scripts/run_negotiation.py` prints PASS.
 - [ ] `python scripts/ws_client.py --mode guided` prints an admin summary.

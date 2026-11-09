@@ -92,6 +92,31 @@ DEMO_SCRIPT = {
 
 APPROVE_WORDS = ("approve", "approved", "yes", "ಹೌದು", "हाँ", "स्वीकार")
 
+LANGUAGE_NAMES = {"kn-IN": "Kannada", "hi-IN": "Hindi", "en-IN": "English"}
+_SCRIPTS = {
+    "kn-IN": re.compile(r"[\u0C80-\u0CFF]"),
+    "hi-IN": re.compile(r"[\u0900-\u097F]"),
+}
+
+
+def language_mismatch(text: str, language: str) -> bool:
+    """True when a transcript is in another script than the pinned session.
+
+    A noisy room contains other talkers; Prisma returns their words even though
+    the session language is fixed. Kannada and Hindi are disjoint scripts, so a
+    clear mismatch is safe to reject before it reaches intake. Code-mixing with
+    Latin words, numbers and the active script is still accepted.
+    """
+    has_kn = bool(_SCRIPTS["kn-IN"].search(text))
+    has_hi = bool(_SCRIPTS["hi-IN"].search(text))
+    if language == "kn-IN":
+        return has_hi and not has_kn
+    if language == "hi-IN":
+        return has_kn and not has_hi
+    if language == "en-IN":
+        return has_kn or has_hi
+    return False
+
 
 class VoiceSession:
     def __init__(
@@ -127,6 +152,8 @@ class VoiceSession:
             session_cap=self.config.session_tts_chars,
         )
         self.stt: Optional[GnaniSTTStream] = None
+        self._stt_lock = asyncio.Lock()
+        self._last_stt_retry = 0.0
         self.pace = max(0.01, self.config.demo_pace) if self.mode == "guided" else 1.0
         self._last_level = 0.0
         self._closed = False
@@ -165,6 +192,7 @@ class VoiceSession:
         self.offers.clear()
         self.negotiation_id = None
         self._turns = 0
+        await self._restart_stt()
         await self.emit(self.ready_payload())
 
     def ready_payload(self) -> dict[str, Any]:
@@ -181,22 +209,7 @@ class VoiceSession:
     async def start(self) -> None:
         await self.emit(self.ready_payload())
         if self.config.has_gnani:
-            self.stt = GnaniSTTStream(
-                language=self.language,
-                on_partial=self._on_partial,
-                on_final=self._on_final_transcript,
-                on_error=self._on_stt_error,
-                config=self.config,
-            )
-            started = await self.stt.start()
-            if not started:
-                await self.emit(
-                    {
-                        "type": "notice",
-                        "level": "warn",
-                        "text": "Prisma STT did not connect; using the browser recogniser.",
-                    }
-                )
+            await self._restart_stt()
         else:
             await self.emit(
                 {
@@ -227,13 +240,35 @@ class VoiceSession:
         self.tasks.clear()
         await asyncio.sleep(0)
 
+    async def _restart_stt(self) -> None:
+        """Prisma fixes language and VAD at handshake, so a switch means reconnect."""
+        if not self.config.has_gnani:
+            return
+        if self.stt is not None:
+            await self.stt.close()
+            self.stt = None
+        stream = GnaniSTTStream(
+            language=self.language,
+            on_partial=self._on_partial,
+            on_final=self._on_final_transcript,
+            on_error=self._on_stt_error,
+            config=self.config,
+        )
+        if await stream.start():
+            self.stt = stream
+        else:
+            await self.emit(
+                {
+                    "type": "notice",
+                    "level": "warn",
+                    "text": "Prisma STT did not connect; using the browser recogniser.",
+                }
+            )
+
     # --------------------------------------------------------------------- speech
     def _speech_seconds(self, text: str) -> float:
         words = max(1, len(re.findall(r"\S+", text)))
-        duration = max(0.7, min(5.0, words * 0.34))
-        if self.mode == "guided":
-            duration = max(0.02, duration * max(0.01, self.pace))
-        return duration
+        return max(0.7, min(5.0, words * 0.34))
 
     async def speak(
         self,
@@ -260,9 +295,13 @@ class VoiceSession:
             }
         )
         await self.emit({"type": "state", "orb": "speaking"})
+        seconds = self._speech_seconds(text)
         if self.tts.enabled and self.credits.allow(len(text)):
             audio = await self.tts.synthesize(text, lang, voice=voice)
             if audio:
+                # The browser plays the returned PCM, so pace the turn by the
+                # real clip length instead of guessing from the word count.
+                seconds = len(audio) / max(1, 2 * self.config.gnani_sample_rate)
                 await self.emit(
                     {
                         "type": "audio",
@@ -282,7 +321,9 @@ class VoiceSession:
                     ),
                 }
             )
-        await self._pauseable_sleep(self._speech_seconds(text))
+        if self.mode == "guided":
+            seconds = max(0.02, seconds * self.pace)
+        await self._pauseable_sleep(seconds)
         await self.emit({"type": "state", "orb": "listening" if self.mode == "live" else "idle"})
 
     async def _greet(self) -> None:
@@ -404,12 +445,33 @@ class VoiceSession:
             return
         await self._resident(text, subtitle)
 
+    async def _ensure_stt(self) -> None:
+        """Reconnect Prisma if it closed while the page sat idle.
+
+        Without this the mic goes silently deaf after a pause: sends to a dead
+        socket are swallowed and the resident sees no transcript.
+        """
+        if not self.config.has_gnani:
+            return
+        if self.stt is not None and self.stt.alive:
+            return
+        async with self._stt_lock:
+            if self.stt is not None and self.stt.alive:
+                return
+            now = time.monotonic()
+            if now - self._last_stt_retry < 3.0:
+                return
+            self._last_stt_retry = now
+            log.info("Reconnecting Prisma STT for %s", self.language)
+            await self._restart_stt()
+
     async def handle_audio(self, data: bytes) -> None:
         level = rms(data)
         now = time.monotonic()
         if now - self._last_level > 0.05:
             self._last_level = now
             await self.emit({"type": "level", "value": round(level, 3)})
+        await self._ensure_stt()
         if self.stt is not None:
             await self.stt.send_audio(data)
 
@@ -418,6 +480,19 @@ class VoiceSession:
 
     async def _on_final_transcript(self, text: str) -> None:
         await self.emit({"type": "partial", "text": ""})
+        if language_mismatch(text, self.language):
+            name = LANGUAGE_NAMES.get(self.language, self.language)
+            await self.emit(
+                {
+                    "type": "notice",
+                    "level": "warn",
+                    "text": (
+                        f"That sounded like another language. This session is set to "
+                        f"{name} — use the language chip, or repeat in {name}."
+                    ),
+                }
+            )
+            return
         await self.handle_text(text)
 
     async def _on_stt_error(self, message: str) -> None:
@@ -429,8 +504,10 @@ class VoiceSession:
             }
         )
 
-    def set_language(self, language: str) -> None:
-        self.language = normalise(language)
+    async def set_language(self, language: str) -> None:
+        language = normalise(language)
+        changed = language != self.language
+        self.language = language
         self.intake.language = self.language
         self.ctx = ConversationContext(
             community=COMMUNITY["name"],
@@ -439,6 +516,8 @@ class VoiceSession:
             unit="can",
             qty=AGGREGATE_QTY,
         )
+        if changed:
+            await self._restart_stt()
 
     async def barge_in(self) -> None:
         await self.emit({"type": "state", "orb": "listening"})
@@ -748,6 +827,24 @@ class VoiceSession:
                 valid_days=offer.valid_days,
                 round_no=offer.round,
                 eligible=eligible,
+            )
+            # The vendor quote is its own audit row, so Replay and the receipt
+            # both show the price actually said, not just the agent's answer.
+            db.add_event(
+                self.negotiation_id,
+                actor="vendor",
+                type="offer",
+                payload={
+                    "vendor_id": engine.vendor_id,
+                    "vendor_name": engine.vendor_name,
+                    "unit_price": offer.unit_price,
+                    "delivery_charge": offer.delivery_charge,
+                    "min_qty": offer.min_qty,
+                    "valid_days": offer.valid_days,
+                    "round": offer.round,
+                    "eligible": eligible,
+                    "source": "simulated",
+                },
             )
             db.update_negotiation(
                 self.negotiation_id,

@@ -99,7 +99,7 @@ async def voice_socket(websocket: WebSocket) -> None:
                     payload.get("decision", "approved"), payload.get("note", "")
                 )
             elif kind == "language":
-                session.set_language(payload.get("language", "en-IN"))
+                await session.set_language(payload.get("language", "en-IN"))
                 await send({"type": "ready", **session.ready_payload()})
             elif kind == "reset":
                 await session.configure(

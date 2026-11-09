@@ -36,6 +36,20 @@ def test_parse_hindi_and_kannada_words():
     assert parse_number("निन्यानवे", "hi-IN") == 99
 
 
+def test_restated_quantity_is_not_summed():
+    # Noisy rooms repeat the same request; the second group is a restatement.
+    assert (
+        parse_number(
+            "ನನಗೆ ವಾರಕ್ಕೆ ಮೂರು ನೀರಿನ ಕ್ಯಾನ್ ಬೇಕು, ದಯವಿಟ್ಟು ವಾರಕ್ಕೆ ಮೂರು ಕ್ಯಾನ್ ಕೊಡಿ",
+            "kn-IN",
+        )
+        == 3
+    )
+    assert parse_number("three water cans, three water cans", "en-IN") == 3
+    # "and" stays inside one number group.
+    assert parse_number("three hundred and sixty cans", "en-IN") == 360
+
+
 def test_parse_returns_none_for_no_number():
     assert parse_number("water cans please") is None
     assert parse_number("") is None
