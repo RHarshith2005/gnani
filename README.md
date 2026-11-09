@@ -230,7 +230,7 @@ Open **`http://localhost:8000/?demo=1`** (or `/room?demo=1`) and press **Start d
 
 ## Deploy on Vercel
 
-The repo ships a Vercel-ready shape: `app.py` is the Python entrypoint, `vercel.json` installs the root `requirements.txt` and web dependencies, builds `web/dist`, and Vercel routes REST and `/ws/voice` to one FastAPI function. WebSockets need Fluid Compute (on by default) and stay open until the function duration limit.
+The repo ships a Vercel-ready shape: `app.py` is the Python entrypoint, `vercel.json` installs the root `requirements.txt` and web dependencies, builds `web/dist`, and Vercel routes REST and `/ws/voice` to one FastAPI function in the Mumbai region (`bom1`). WebSockets need Fluid Compute (on by default) and stay open until the function duration limit.
 
 Set these in **Project Settings → Environment Variables**: `GNANI_API_KEY`, `GNANI_STT_MODEL`, `GNANI_TTS_MODEL`, and optionally `LLM_API_KEY` and the `SUPABASE_*` keys. Do **not** set `NEGOAI_DB`: Vercel's filesystem is read-only except `/tmp`, so the store automatically moves to `/tmp/negoai.sqlite3` there.
 
@@ -288,16 +288,17 @@ docs/                     screenshots, QA log, submission pack
 ## Tests and scripts
 
 ```bash
-python -m pytest api/tests -q          # 74 passed, no keys needed
+python -m pytest api/tests -q          # 87 passed, no keys needed
 python scripts/smoke_test.py           # live Timbre → Prisma roundtrip in kn/hi/en
 python scripts/run_negotiation.py      # three personas, text mode, stores offers
+python scripts/overlap_repro.py A B C  # serialized speech, gating, playback timing
 python scripts/ws_client.py --mode guided
-cd web && npm test                     # 6 reducer/format checks (node:test)
+cd web && npm test                     # 9 frontend checks (node:test)
 ```
 
 `run_negotiation.py` finishes in seconds and prints per-round prices. `ws_client.py` drives the real `/ws/voice` socket and prints the same events the browser receives.
 
-**What is verified:** 74 Python tests plus 6 Node reducer/format checks; engine math and guardrails, intake in three languages plus code-mixing, number spelling, composer output, PCM transport, LLM JSON extraction, SQLite persistence and idempotent seed, the real `/ws/voice` protocol (guided run plus typed intake and language switch), API/health without secrets, demand aggregation **360 → 363**, the tamper-evident receipt chain, the production build, and a **live Gnani TTS → STT roundtrip in Kannada, Hindi and English** (`python scripts/smoke_test.py` prints PASS).
+**What is verified:** 87 Python tests plus 9 Node tests; engine math and guardrails, intake in three languages plus code-mixing, number spelling, composer output, PCM transport, LLM JSON extraction, SQLite persistence and idempotent seed, serialized speech and playback acknowledgements, half-duplex interruption and reconnect handling, the real `/ws/voice` protocol (guided run plus typed intake and language switch), API/health without secrets, demand aggregation **360 → 363**, the tamper-evident receipt chain, the production build, and a **live Gnani TTS → STT roundtrip in Kannada, Hindi and English** (`python scripts/smoke_test.py` prints PASS).
 
 **What is not:** human-mic accuracy in a noisy room, interruption behaviour on a physical phone, and the Supabase schema deployment (the project is connected but its tables are not applied yet). These are recorded honestly in [`docs/qa.md`](docs/qa.md); [`scripts/qa.md`](scripts/qa.md) is the runbook for closing them.
 

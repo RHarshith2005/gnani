@@ -8,9 +8,12 @@ from api.voice.session import VoiceSession
 
 async def run_demo(language: str = "en-IN") -> list[dict]:
     events: list[dict] = []
+    session = None
 
     async def send(payload: dict) -> None:
         events.append(json.loads(json.dumps(payload, default=str)))
+        if session is not None and payload.get("type") == "agent":
+            await session.playback_done(payload["utterance_id"], payload["epoch"])
 
     session = VoiceSession(send, mode="guided", language=language)
     await session.start()

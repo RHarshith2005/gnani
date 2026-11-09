@@ -54,6 +54,25 @@
   border-color: rgba(255, 255, 255, 0.9);
 }
 
+.session-time {
+  color: var(--deep-ink);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.session-time--warning {
+  color: #8b3c00;
+  font-weight: 600;
+}
+.session-resume {
+  border: 0;
+  padding: 5px 8px;
+  color: #4a3000;
+  background: rgba(255, 224, 158, 0.85);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
 .screen__card {
   position: relative;
   width: min(1240px, 100%);

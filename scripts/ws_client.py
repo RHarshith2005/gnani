@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import sys
 import time
@@ -81,6 +82,26 @@ async def main() -> int:
                     continue
                 seen += 1
                 kind = event.get("type")
+                if kind == "agent" and event.get("tts") == "browser":
+                    await socket.send(json.dumps({
+                        "type": "playback_done",
+                        "utterance_id": event["utterance_id"],
+                        "epoch": event["epoch"],
+                    }))
+                elif kind == "audio":
+                    clip_seconds = len(base64.b64decode(event.get("pcm", ""))) / (
+                        2 * max(1, int(event.get("sampleRate", 16000)))
+                    )
+
+                    async def acknowledge_audio(event=event, duration=clip_seconds):
+                        await asyncio.sleep(duration)
+                        await socket.send(json.dumps({
+                            "type": "playback_done",
+                            "utterance_id": event["utterance_id"],
+                            "epoch": event["epoch"],
+                        }))
+
+                    asyncio.create_task(acknowledge_audio())
                 if kind == "agent":
                     label = "vendor-audio" if event.get("role") == "vendor" else "agent"
                     print(f"{label:9} [{event.get('lang')}] {event.get('text')}")

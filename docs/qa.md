@@ -9,9 +9,10 @@ and are not claimed as passing.
 
 ## Automated suite
 
-- `pytest api/tests -q` → **74 passed** (no keys, no network).
-- `cd web && npm test` → **6 passed** (`node:test`, reducer + format helpers).
-- `cd web && npm run build` → passes (819 kB bundle, gzip 232 kB).
+- `pytest api/tests -q` → **87 passed** (no keys, no network).
+- `cd web && npm test` → **9 passed** (`node:test`, client, voice, reducer + format helpers).
+- `cd web && npm run build` → passes (823 kB bundle, gzip 233 kB).
+- `python scripts/overlap_repro.py A B C` → **3 passed** (serialized speech, half-duplex gate, four-second playback acknowledgement).
 - `python scripts/smoke_test.py` → **PASS** for Kannada, Hindi and English
   against the live Gnani APIs.
 
@@ -26,11 +27,13 @@ and are not claimed as passing.
 | LLM | fenced/embedded JSON, disabled client is offline | `test_llm.py` (2) | Pass |
 | Store | idempotent seed, aggregation +4, event order, offers, sessions | `test_db.py` (5) | Pass |
 | Receipt | deterministic chain, tamper changes head, totals, endpoint | `test_receipt.py` (4) | Pass |
-| Gateway | real socket: guided run, typed intake, language switch, bad input | `test_gateway.py` (4) | Pass |
+| Gateway | real socket: guided run, typed intake, language switch, bad input, immediate stop | `test_gateway.py` (5) | Pass |
+| Voice serialization | unique utterance IDs, clip-end acknowledgement, bounded timeout, interruption | `test_voice_serial.py` (6) | Pass |
 | Demo | guided run transcript → vendors → offers → admin | `test_session_demo.py` (3) | Pass |
 | API | health without secrets, vendors, demand, approvals, demo roles | `test_api.py` (6) | Pass |
 | Gnani wire | TTS payload, raw PCM, STT headers, 1,024-byte framing | `test_gnani_wire.py` (4) | Pass |
 | Credits | session cap and voice separation | `test_credits.py` (2) | Pass |
+| Browser voice | Gnani avoids browser TTS; browser speaks once; disconnect stops audio without auto-hello | `voice.test.mjs`, `client.test.mjs` | Pass |
 | Reducer | ready/offers/admin/approval, no duplicate vendor line | `session.test.mjs` (4) | Pass |
 | Format | rupee grouping, percent, clamp | `format.test.mjs` (2) | Pass |
 | Boot | `GET /api/health` ok, no key material | suite + live config | Pass |

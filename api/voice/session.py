@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import difflib
 import logging
 import re
 import time
+import unicodedata
+from collections import deque
 from typing import Any, Awaitable, Callable, Optional
 
 from .. import db
@@ -47,6 +50,8 @@ AGGREGATE_QTY = 360
 TARGET_PRICE = 18
 MAX_PRICE = 20
 MAX_ROUNDS = 3
+PLAYBACK_TAIL_SECONDS = 0.3
+AGENT_GATE_TAIL_SECONDS = 0.4
 
 GREETING = {
     "kn-IN": (
@@ -158,6 +163,17 @@ class VoiceSession:
         self._last_level = 0.0
         self._closed = False
         self._turns = 0
+        self._speak_lock = asyncio.Lock()
+        self._utterance_id = 0
+        self._epoch = 0
+        self._active_playback: tuple[int, int, asyncio.Event] | None = None
+        self._synthesis_task: asyncio.Task | None = None
+        self.agent_speaking = False
+        self._interrupt_event = asyncio.Event()
+        self._resident_ready = asyncio.Event()
+        self._input_lock = asyncio.Lock()
+        self._recent_agent_lines: deque[str] = deque(maxlen=3)
+        self._last_negotiation_notice = 0.0
         # Playback controls (Prompt 10). The gate is set while running.
         self.paused = asyncio.Event()
         self.paused.set()
@@ -181,6 +197,14 @@ class VoiceSession:
         return task
 
     async def configure(self, *, mode: str, language: str) -> None:
+        self._epoch += 1
+        self.agent_speaking = False
+        if self._synthesis_task is not None and not self._synthesis_task.done():
+            self._synthesis_task.cancel()
+        if self._active_playback is not None:
+            self._active_playback[2].set()
+        self._interrupt_event.clear()
+        self._resident_ready.clear()
         await self._cancel_tasks()
         self.mode = mode if mode in ("live", "guided") else "live"
         self.language = normalise(language)
@@ -201,6 +225,7 @@ class VoiceSession:
             "mode": self.mode,
             "language": self.language,
             "session_id": self.negotiation_id or f"session-{int(time.time() * 1000)}",
+            "epoch": self._epoch,
             "community": COMMUNITY,
             "capabilities": self.config.as_public(),
             "languages": ["kn-IN", "hi-IN", "en-IN"],
@@ -281,50 +306,123 @@ class VoiceSession:
     ) -> None:
         if not text:
             return
-        await self._wait_if_paused()
-        lang = normalise(lang or self.language)
-        await self.emit({"type": "state", "orb": "thinking"})
-        await self.emit(
-            {
-                "type": "agent",
-                "role": role,
-                "text": text,
-                "subtitle": subtitle or text,
-                "lang": lang,
-                "tts": "gnani" if self.tts.enabled else "browser",
-            }
-        )
-        await self.emit({"type": "state", "orb": "speaking"})
-        seconds = self._speech_seconds(text)
-        if self.tts.enabled and self.credits.allow(len(text)):
-            audio = await self.tts.synthesize(text, lang, voice=voice)
-            if audio:
-                # The browser plays the returned PCM, so pace the turn by the
-                # real clip length instead of guessing from the word count.
-                seconds = len(audio) / max(1, 2 * self.config.gnani_sample_rate)
+        request_epoch = self._epoch
+        async with self._speak_lock:
+            if request_epoch != self._epoch:
+                return
+            while True:
+                await self._wait_if_paused()
+                if self.phase == "negotiation" and self._interrupt_event.is_set():
+                    await self._resident_ready.wait()
+                    self._resident_ready.clear()
+                    self._interrupt_event.clear()
+
+                self._utterance_id += 1
+                utterance_id = self._utterance_id
+                epoch = self._epoch
+                lang = normalise(lang or self.language)
+                self.agent_speaking = True
+                self._recent_agent_lines.append(self._normalise_line(text))
+                playback_done = asyncio.Event()
+                self._active_playback = (epoch, utterance_id, playback_done)
+                self._synthesis_task = None
+                use_gnani = self.tts.enabled and self.credits.allow(len(text))
+                await self.emit({"type": "state", "orb": "thinking"})
                 await self.emit(
                     {
-                        "type": "audio",
-                        "pcm": b64encode_pcm(audio),
-                        "sampleRate": self.config.gnani_sample_rate,
+                        "type": "agent",
+                        "role": role,
+                        "text": text,
+                        "subtitle": subtitle or text,
+                        "lang": lang,
+                        "tts": "gnani" if use_gnani else "browser",
+                        "utterance_id": utterance_id,
+                        "epoch": epoch,
                     }
                 )
-        elif self.tts.enabled and self.credits.exhausted and not self._credit_notice:
-            self._credit_notice = True
-            await self.emit(
-                {
-                    "type": "notice",
-                    "level": "warn",
-                    "text": (
-                        "Voice credit budget reached — continuing in text with English "
-                        "subtitles. Every number still comes from the engine."
-                    ),
-                }
-            )
-        if self.mode == "guided":
-            seconds = max(0.02, seconds * self.pace)
-        await self._pauseable_sleep(seconds)
-        await self.emit({"type": "state", "orb": "listening" if self.mode == "live" else "idle"})
+                await self.emit({"type": "state", "orb": "speaking"})
+
+                seconds = self._speech_seconds(text)
+                try:
+                    if use_gnani:
+                        self._synthesis_task = asyncio.create_task(
+                            self.tts.synthesize(text, lang, voice=voice)
+                        )
+                        try:
+                            audio = await asyncio.shield(self._synthesis_task)
+                        except asyncio.CancelledError:
+                            if asyncio.current_task() and asyncio.current_task().cancelling():
+                                raise
+                            audio = None
+                        if audio and epoch == self._epoch:
+                            seconds = len(audio) / max(1, 2 * self.config.gnani_sample_rate)
+                            await self.emit(
+                                {
+                                    "type": "audio",
+                                    "pcm": b64encode_pcm(audio),
+                                    "sampleRate": self.config.gnani_sample_rate,
+                                    "utterance_id": utterance_id,
+                                    "epoch": epoch,
+                                }
+                            )
+                    elif self.tts.enabled and self.credits.exhausted and not self._credit_notice:
+                        self._credit_notice = True
+                        await self.emit(
+                            {
+                                "type": "notice",
+                                "level": "warn",
+                                "text": (
+                                    "Voice credit budget reached — continuing in text with English "
+                                    "subtitles. Every number still comes from the engine."
+                                ),
+                            }
+                        )
+
+                    timeout = seconds * 1.5 + 1.0
+                    try:
+                        await asyncio.wait_for(playback_done.wait(), timeout=timeout)
+                    except asyncio.TimeoutError:
+                        log.warning("playback acknowledgement timed out for utterance %s", utterance_id)
+
+                    interrupted = epoch != self._epoch
+                    if not interrupted:
+                        await asyncio.sleep(PLAYBACK_TAIL_SECONDS)
+                        await asyncio.sleep(AGENT_GATE_TAIL_SECONDS - PLAYBACK_TAIL_SECONDS)
+                    self.agent_speaking = False
+                    if not interrupted:
+                        await self.emit(
+                            {"type": "state", "orb": "listening" if self.mode == "live" else "idle"}
+                        )
+                        return
+                    if self.phase != "negotiation":
+                        return
+                except asyncio.CancelledError:
+                    raise
+                finally:
+                    if self._synthesis_task is not None and self._synthesis_task.done():
+                        self._synthesis_task = None
+                    if self._active_playback == (epoch, utterance_id, playback_done):
+                        self._active_playback = None
+                    self.agent_speaking = False
+
+    @staticmethod
+    def _normalise_line(text: str) -> str:
+        decomposed = unicodedata.normalize("NFKC", text).casefold()
+        return " ".join(re.sub(r"[^\w\s]", " ", decomposed).split())
+
+    def _is_agent_echo(self, text: str) -> bool:
+        candidate = self._normalise_line(text)
+        if not candidate:
+            return False
+        return any(
+            candidate == line or difflib.SequenceMatcher(None, candidate, line).ratio() > 0.8
+            for line in self._recent_agent_lines
+        )
+
+    async def playback_done(self, utterance_id: int, epoch: int) -> None:
+        active = self._active_playback
+        if active and active[:2] == (epoch, utterance_id) and epoch == self._epoch:
+            active[2].set()
 
     async def _greet(self) -> None:
         spoken, subtitle = GREETING.get(self.language, GREETING["en-IN"])
@@ -429,10 +527,14 @@ class VoiceSession:
         if not text:
             return
         if self.phase in ("negotiation",):
-            await self.speak(
-                "I am in the middle of a call with a supplier. One moment, please.",
-                "I am in the middle of a call with a supplier. One moment, please.",
-            )
+            now = time.monotonic()
+            if now - self._last_negotiation_notice >= 5.0:
+                self._last_negotiation_notice = now
+                await self.emit(
+                    {"type": "notice", "level": "info", "text": "The supplier call is in progress."}
+                )
+            if self._interrupt_event.is_set():
+                self._resident_ready.set()
             return
         if self.phase in ("approval", "done"):
             if any(word in text.lower() for word in APPROVE_WORDS):
@@ -443,7 +545,11 @@ class VoiceSession:
                     "The offer is with the committee. Tap Approve or Reject on the admin screen.",
                 )
             return
-        await self._resident(text, subtitle)
+        async with self._input_lock:
+            if self._is_agent_echo(text):
+                log.info("Dropped agent echo transcript")
+                return
+            await self._resident(text, subtitle)
 
     async def _ensure_stt(self) -> None:
         """Reconnect Prisma if it closed while the page sat idle.
@@ -466,6 +572,8 @@ class VoiceSession:
             await self._restart_stt()
 
     async def handle_audio(self, data: bytes) -> None:
+        if self.agent_speaking:
+            return
         level = rms(data)
         now = time.monotonic()
         if now - self._last_level > 0.05:
@@ -480,6 +588,9 @@ class VoiceSession:
 
     async def _on_final_transcript(self, text: str) -> None:
         await self.emit({"type": "partial", "text": ""})
+        if self.agent_speaking or self._is_agent_echo(text):
+            log.info("Dropped final transcript while agent is speaking or for echo")
+            return
         if language_mismatch(text, self.language):
             name = LANGUAGE_NAMES.get(self.language, self.language)
             await self.emit(
@@ -520,8 +631,19 @@ class VoiceSession:
             await self._restart_stt()
 
     async def barge_in(self) -> None:
+        self._epoch += 1
+        self.agent_speaking = False
+        if self.phase == "negotiation":
+            self._interrupt_event.set()
+        else:
+            self._interrupt_event.clear()
+            self._resident_ready.clear()
+        if self._synthesis_task is not None and not self._synthesis_task.done():
+            self._synthesis_task.cancel()
+        if self._active_playback is not None:
+            self._active_playback[2].set()
+        await self.emit({"type": "interrupt", "epoch": self._epoch})
         await self.emit({"type": "state", "orb": "listening"})
-        await self.emit({"type": "notice", "level": "info", "text": "Interrupted — listening."})
 
     async def pause(self) -> None:
         self.paused.clear()
@@ -537,6 +659,17 @@ class VoiceSession:
     async def stop(self) -> None:
         """Stop the negotiation without deleting its append-only audit trail."""
         self.paused.set()
+        self._epoch += 1
+        self.agent_speaking = False
+        if self._synthesis_task is not None and not self._synthesis_task.done():
+            self._synthesis_task.cancel()
+        if self._active_playback is not None:
+            self._active_playback[2].set()
+        current = asyncio.current_task()
+        for task in list(self.tasks):
+            if task is not current:
+                task.cancel()
+                self.tasks.discard(task)
         self._skip_requested = False
         if self.negotiation_task is not None and not self.negotiation_task.done():
             self.negotiation_task.cancel()

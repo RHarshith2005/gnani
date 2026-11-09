@@ -5,6 +5,7 @@ import AppShell from './AppShell.jsx'
 import { LanguageChips } from './SocialSquares.jsx'
 import { useSession, LANGUAGES } from '../state/session.js'
 import { voice } from '../lib/voice.js'
+import { voiceClient } from '../lib/client.js'
 import { ROLE_LABEL } from '../lib/format.js'
 
 const ease = [0.22, 1, 0.36, 1]
@@ -92,7 +93,7 @@ export default function VoiceConsole() {
   useEffect(() => {
     if (started.current) return
     started.current = true
-    if (useSession.getState().status === 'idle') voice.startLive()
+    if (useSession.getState().status === 'idle' && !voiceClient.sessionStarted) voice.startLive()
   }, [])
 
   useEffect(() => {
@@ -185,11 +186,13 @@ export default function VoiceConsole() {
 
         {notices.length > 0 && (
           <div className="notices">
-            {notices.map((notice) => (
-              <p key={notice.id} className={`notice ${notice.level === 'warn' ? 'notice--warn' : ''}`}>
-                {notice.text}
-              </p>
-            ))}
+            {notices
+              .filter((notice) => notice.text !== 'Connection dropped. Tap to continue.')
+              .map((notice) => (
+                <p key={notice.id} className={`notice ${notice.level === 'warn' ? 'notice--warn' : ''}`}>
+                  {notice.text}
+                </p>
+              ))}
           </div>
         )}
 

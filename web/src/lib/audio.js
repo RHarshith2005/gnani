@@ -126,6 +126,8 @@ export class AudioPlayer {
     this.spectrum = null
     this.raf = 0
     this.onIdle = null
+    this.onPlaybackDone = null
+    this.browserSpeaking = false
   }
 
   async unlock() {
@@ -164,7 +166,7 @@ export class AudioPlayer {
   }
 
   /** Enqueue an Int16 PCM chunk at 16 kHz. */
-  push(int16, sampleRate = TARGET_RATE) {
+  push(int16, sampleRate = TARGET_RATE, { utteranceId, epoch } = {}) {
     if (!this.ctx || !this.enabled) return
     const floats = new Float32Array(int16.length)
     for (let i = 0; i < int16.length; i++) floats[i] = int16[i] / 32768
@@ -175,6 +177,8 @@ export class AudioPlayer {
     const src = this.ctx.createBufferSource()
     src.buffer = buffer
     src.connect(this.gain)
+    src.utteranceId = utteranceId
+    src.epoch = epoch
 
     const startAt = Math.max(this.ctx.currentTime + 0.01, this.silentUntil)
     src.start(startAt)
@@ -182,6 +186,12 @@ export class AudioPlayer {
     this.queue.push(src)
     src.onended = () => {
       this.queue = this.queue.filter((s) => s !== src)
+      if (
+        utteranceId != null &&
+        !this.queue.some((queued) => queued.utteranceId === utteranceId)
+      ) {
+        this.onPlaybackDone?.(utteranceId, epoch)
+      }
       if (this.queue.length === 0) this.onIdle?.()
     }
   }
@@ -210,11 +220,16 @@ export class AudioPlayer {
     })
     this.queue = []
     this.silentUntil = this.ctx?.currentTime || 0
-    if (this.ctx) window.speechSynthesis?.cancel()
+    this.browserSpeaking = false
+    window.speechSynthesis?.cancel()
+  }
+
+  setBrowserSpeaking(speaking) {
+    this.browserSpeaking = speaking
   }
 
   get speaking() {
-    return this.queue.length > 0 || Date.now() < (this.silentUntil || 0) * 1000
+    return this.queue.length > 0 || this.browserSpeaking
   }
 }
 
@@ -241,7 +256,7 @@ function pickVoice(lang) {
   return voicesCache.find((v) => v.lang?.toLowerCase().startsWith(prefix)) || null
 }
 
-export function speakText(text, lang = 'en-IN') {
+export function speakText(text, lang = 'en-IN', { onstart, onend } = {}) {
   if (!text || !window.speechSynthesis) return false
   const utterance = new SpeechSynthesisUtterance(text)
   const voice = pickVoice(lang)
@@ -249,6 +264,8 @@ export function speakText(text, lang = 'en-IN') {
   utterance.lang = voice?.lang || lang
   utterance.rate = 0.98
   utterance.pitch = 1.0
+  utterance.onstart = onstart
+  utterance.onend = onend
   window.speechSynthesis.speak(utterance)
   return true
 }
@@ -266,8 +283,10 @@ export function startBrowserRecognition({ lang, onPartial, onFinal, onError }) {
   rec.continuous = true
   rec.maxAlternatives = 1
   let stopped = false
+  let paused = false
 
   rec.onresult = (event) => {
+    if (paused) return
     let interim = ''
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const result = event.results[i]
@@ -283,7 +302,7 @@ export function startBrowserRecognition({ lang, onPartial, onFinal, onError }) {
     onError?.(e.error)
   }
   rec.onend = () => {
-    if (!stopped) {
+    if (!stopped && !paused) {
       try {
         rec.start()
       } catch {
@@ -299,10 +318,28 @@ export function startBrowserRecognition({ lang, onPartial, onFinal, onError }) {
   return {
     stop() {
       stopped = true
+      paused = false
       try {
         rec.stop()
       } catch {
         /* ignore */
+      }
+    },
+    pause() {
+      paused = true
+      try {
+        rec.stop()
+      } catch {
+        /* ignore */
+      }
+    },
+    resume() {
+      if (stopped || !paused) return
+      paused = false
+      try {
+        rec.start()
+      } catch {
+        /* browser throttles restarts; ignore */
       }
     },
   }

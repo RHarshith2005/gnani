@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link, NavLink } from 'react-router-dom'
+import { useSession } from '../state/session.js'
+import { voice } from '../lib/voice.js'
 import FurTorus from './FurTorus.jsx'
 import Logo from './Logo.jsx'
 import '../styles/screens.css'
@@ -19,6 +22,18 @@ const STATE_COPY = {
 }
 
 export default function AppShell({ children, orb = 'idle', level = 0, footer = null }) {
+  const sessionStartedAt = useSession((s) => s.sessionStartedAt)
+  const status = useSession((s) => s.status)
+  const [now, setNow] = useState(Date.now())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const elapsed = sessionStartedAt ? Math.max(0, Math.floor((now - sessionStartedAt) / 1000)) : 0
+  const sessionWarning = elapsed >= 240
+
   return (
     <main className="screen">
       <header className="screen__top">
@@ -37,6 +52,17 @@ export default function AppShell({ children, orb = 'idle', level = 0, footer = n
             </NavLink>
           ))}
         </nav>
+        {sessionStartedAt ? (
+          <span className={`session-time ${sessionWarning ? 'session-time--warning' : ''}`}>
+            Session {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}
+            {sessionWarning ? ' · reconnect soon' : ''}
+          </span>
+        ) : null}
+        {sessionStartedAt && status === 'idle' ? (
+          <button type="button" className="session-resume" onClick={() => voice.resume()}>
+            Connection dropped. Tap to continue
+          </button>
+        ) : null}
       </header>
 
       <div className="screen__card">

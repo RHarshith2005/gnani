@@ -77,13 +77,18 @@ async def voice_socket(websocket: WebSocket) -> None:
                 continue
 
             if kind == "text":
-                await session.handle_text(payload.get("text", ""))
+                session._spawn(session.handle_text(payload.get("text", "")))
             elif kind == "audio":
                 data = b64decode_pcm(payload.get("pcm", ""))
                 if data:
-                    await session.handle_audio(data)
+                    session._spawn(session.handle_audio(data))
+            elif kind == "playback_done":
+                utterance_id = payload.get("utterance_id")
+                epoch = payload.get("epoch")
+                if isinstance(utterance_id, int) and isinstance(epoch, int):
+                    await session.playback_done(utterance_id, epoch)
             elif kind == "barge_in":
-                await session.barge_in()
+                session._spawn(session.barge_in())
             elif kind == "control":
                 action = payload.get("action")
                 if action == "pause":
@@ -95,8 +100,8 @@ async def voice_socket(websocket: WebSocket) -> None:
                 elif action == "skip":
                     await session.skip()
             elif kind == "approve":
-                await session.approve(
-                    payload.get("decision", "approved"), payload.get("note", "")
+                session._spawn(
+                    session.approve(payload.get("decision", "approved"), payload.get("note", ""))
                 )
             elif kind == "language":
                 await session.set_language(payload.get("language", "en-IN"))

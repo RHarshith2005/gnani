@@ -12,6 +12,8 @@ const initial = {
   status: 'idle', // idle | connecting | ready | error
   mode: 'live',
   sessionId: null,
+  sessionStartedAt: null,
+  epoch: 0,
   community: { id: 'green-residency', name: 'Green Residency', households: 120 },
   capabilities: { stt: 'browser', tts: 'browser' },
   language: 'kn-IN',
@@ -85,6 +87,8 @@ export const useSession = create((set) => ({
         set({
           status: 'ready',
           sessionId: event.session_id,
+          sessionStartedAt: Date.now(),
+          epoch: event.epoch || 0,
           mode: event.mode || 'live',
           language: event.language || 'kn-IN',
           community: event.community || initial.community,
@@ -94,6 +98,9 @@ export const useSession = create((set) => ({
         break
       case 'state':
         set({ orb: event.orb, speaking: event.orb === 'speaking' })
+        break
+      case 'interrupt':
+        set({ epoch: event.epoch, orb: 'listening', speaking: false })
         break
       case 'level':
         set({ level: Math.max(0, Math.min(1, Number(event.value) || 0)) })

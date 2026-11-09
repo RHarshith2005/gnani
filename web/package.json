@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "test": "node --test src/lib/format.test.mjs src/state/session.test.mjs"
+    "test": "node --test src/lib/format.test.mjs src/lib/voice.test.mjs src/lib/client.test.mjs src/state/session.test.mjs"
   },
   "dependencies": {
     "@supabase/server": "^1.9.2",

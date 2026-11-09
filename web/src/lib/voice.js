@@ -5,6 +5,7 @@ import {
   createMic,
   player,
   primeVoices,
+  rms,
   speakText,
   speechRecognitionAvailable,
   startBrowserRecognition,
@@ -13,10 +14,11 @@ import {
 let mic = null
 let recognition = null
 let recognitionLang = null
-let lastAudioAt = 0
-let pendingSpeech = null
-let speechTimer = 0
 let levelTimer = 0
+let recognitionResumeTimer = 0
+let highMicLevelMs = 0
+let currentEpoch = 0
+let activeUtteranceId = null
 
 /** The server tells us whether it has real STT/TTS; the UI adapts. */
 function usingGnaniSTT() {
@@ -45,15 +47,17 @@ function stopSyntheticLevel() {
   levelTimer = 0
 }
 
-function scheduleSpeech() {
-  // If the gateway sends Timbre audio, browser TTS stays out of the way.
-  if (pendingSpeech && Date.now() - lastAudioAt > 900) {
-    const { text, lang } = pendingSpeech
-    pendingSpeech = null
-    if (!usingGnaniTTS() || Date.now() - lastAudioAt > 2500) {
-      speakText(text, lang)
-    }
+function monitorMicForBargeIn(int16) {
+  if (!useSession.getState().micOn || !player.speaking || activeUtteranceId == null) {
+    highMicLevelMs = 0
+    return false
   }
+  highMicLevelMs = rms(int16) >= 0.3 ? highMicLevelMs + int16.length / 16 : 0
+  if (highMicLevelMs >= 250) {
+    highMicLevelMs = 0
+    voice.bargeIn()
+  }
+  return true
 }
 
 let sideEffectsInstalled = false
@@ -77,24 +81,67 @@ export function installEventSideEffects() {
   })
 
   const original = useSession.getState().applyEvent
+  player.onPlaybackDone = (utteranceId, epoch) => {
+    if (epoch === currentEpoch) voiceClient.playbackDone(utteranceId, epoch)
+  }
   useSession.setState({
     applyEvent: (event) => {
-      if (event?.type === 'audio' && event.pcm) {
-        lastAudioAt = Date.now()
+      if (event?.type === 'ready') {
+        currentEpoch = Number(event.epoch) || 0
+        activeUtteranceId = null
+      }
+      if (
+        (event?.type === 'agent' || event?.type === 'audio') &&
+        Number.isInteger(event.epoch) &&
+        event.epoch < currentEpoch
+      ) {
+        return
+      }
+      if (event?.type === 'interrupt') {
+        currentEpoch = Math.max(currentEpoch, Number(event.epoch) || 0)
+        activeUtteranceId = null
+        highMicLevelMs = 0
+        player.stop()
+        clearTimeout(recognitionResumeTimer)
+        recognitionResumeTimer = setTimeout(() => recognition?.resume(), 400)
+      }
+      if (event?.type === 'agent') {
+        currentEpoch = Math.max(currentEpoch, Number(event.epoch) || 0)
+        activeUtteranceId = event.utterance_id
+        if (event.tts === 'browser') {
+          recognition?.pause()
+          clearTimeout(recognitionResumeTimer)
+          player.setBrowserSpeaking(true)
+          const started = speakText(event.text, event.lang, {
+            onend: () => {
+              player.setBrowserSpeaking(false)
+              if (Number.isInteger(event.utterance_id)) {
+                voiceClient.playbackDone(event.utterance_id, event.epoch)
+              }
+              recognitionResumeTimer = setTimeout(() => recognition?.resume(), 400)
+            },
+          })
+          if (!started) {
+            player.setBrowserSpeaking(false)
+            voiceClient.playbackDone(event.utterance_id, event.epoch)
+          }
+        }
+      }
+      if (
+        event?.type === 'audio' &&
+        event.pcm &&
+        (event.epoch == null || event.epoch >= currentEpoch) &&
+        (event.utterance_id == null || event.utterance_id === activeUtteranceId)
+      ) {
+        currentEpoch = Math.max(currentEpoch, Number(event.epoch) || 0)
         try {
-          player.push(base64ToInt16(event.pcm), event.sampleRate || 16000)
+          player.push(base64ToInt16(event.pcm), event.sampleRate || 16000, {
+            utteranceId: event.utterance_id,
+            epoch: event.epoch,
+          })
         } catch {
           /* malformed chunk, ignore */
         }
-      }
-      if (event?.type === 'agent') {
-        pendingSpeech = {
-          text: event.subtitle || event.text,
-          lang: event.lang || useSession.getState().language,
-        }
-        lastAudioAt = 0
-        clearTimeout(speechTimer)
-        speechTimer = setTimeout(scheduleSpeech, 700)
       }
       if (event?.type === 'transcript' && event.role === 'resident') {
         player.stop()
@@ -119,7 +166,10 @@ export async function enableMic() {
   if (usingGnaniSTT()) {
     try {
       mic = await createMic({
-        onChunk: (int16) => voiceClient.audio(int16),
+        onChunk: (int16) => {
+          if (!useSession.getState().micOn || monitorMicForBargeIn(int16)) return
+          voiceClient.audio(int16)
+        },
       })
     } catch (err) {
       store.addNotice({
@@ -154,6 +204,11 @@ export async function enableMic() {
           }),
       })
     }
+    try {
+      mic = await createMic({ onChunk: monitorMicForBargeIn })
+    } catch {
+      // Browser recognition remains available even if the PCM meter is unsupported.
+    }
   } else {
     store.addNotice({
       text: 'This browser has no speech recognition. Type instead — same agent brain.',
@@ -163,6 +218,9 @@ export async function enableMic() {
 }
 
 export function disableMic() {
+  clearTimeout(recognitionResumeTimer)
+  recognitionResumeTimer = 0
+  highMicLevelMs = 0
   mic?.stop()
   mic = null
   recognition?.stop()
@@ -259,7 +317,12 @@ export const voice = {
 
   bargeIn() {
     player.stop()
+    activeUtteranceId = null
     voiceClient.bargeIn()
+  },
+
+  resume() {
+    voiceClient.resume()
   },
 
   pause: pauseNegotiation,

@@ -1,7 +1,8 @@
 import { useSession } from '../state/session.js'
+import { player } from './audio.js'
 
 function resolveUrl() {
-  const explicit = import.meta.env.VITE_API_URL
+  const explicit = import.meta.env?.VITE_API_URL
   if (explicit) {
     return explicit.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws/voice'
   }
@@ -19,6 +20,9 @@ class VoiceClient {
     this.pending = []
     this.retries = 0
     this.closedByUser = false
+    this.sessionStarted = false
+    this.pendingHello = false
+    this.pingTimer = 0
     this.url = resolveUrl()
   }
 
@@ -27,6 +31,7 @@ class VoiceClient {
   }
 
   connect() {
+    if (this.sessionStarted && !this.pendingHello && !this.ws) return
     if (this.connected || this.ws?.readyState === WebSocket.CONNECTING) return
     this.closedByUser = false
     const store = useSession.getState()
@@ -44,12 +49,19 @@ class VoiceClient {
 
     ws.onopen = () => {
       this.retries = 0
-      const { mode, language } = useSession.getState()
-      this.send({ type: 'hello', mode, language })
+      if (this.pendingHello || !this.sessionStarted) {
+        const { mode, language } = useSession.getState()
+        ws.send(JSON.stringify({ type: 'hello', mode, language }))
+        this.pendingHello = false
+        this.sessionStarted = true
+      }
       this.pending.splice(0).forEach((msg) => this.send(msg))
+      clearInterval(this.pingTimer)
+      this.pingTimer = setInterval(() => this.send({ type: 'ping' }), 20_000)
     }
 
     ws.onmessage = (e) => {
+      if (this.ws !== ws) return
       if (typeof e.data !== 'string') return
       let payload
       try {
@@ -65,18 +77,21 @@ class VoiceClient {
     }
 
     ws.onclose = () => {
+      clearInterval(this.pingTimer)
+      this.pingTimer = 0
       this.ws = null
       const store = useSession.getState()
-      if (store.status === 'ready') store.setStatus('idle')
-      if (!this.closedByUser && this.retries < 3) {
-        this.retries += 1
-        setTimeout(() => this.connect(), 700 * this.retries)
+      if (!this.closedByUser && this.sessionStarted) {
+        player.stop()
+        store.addNotice({ text: 'Connection dropped. Tap to continue.', level: 'warn' })
       }
+      if (!this.closedByUser && this.sessionStarted) store.setStatus('idle')
     }
   }
 
   send(message) {
     if (!this.connected) {
+      if (this.sessionStarted && !this.pendingHello) return false
       this.pending.push(message)
       this.connect()
       return false
@@ -89,8 +104,22 @@ class VoiceClient {
     useSession.setState({ mode, language })
     if (this.connected) {
       this.send({ type: 'hello', mode, language })
+      this.pendingHello = false
+      this.sessionStarted = true
     } else {
-      // onopen reads mode/language from the store, so no duplicate hello.
+      this.pendingHello = true
+      this.connect()
+    }
+  }
+
+  resume() {
+    this.pendingHello = true
+    if (this.connected) {
+      const { mode, language } = useSession.getState()
+      this.send({ type: 'hello', mode, language })
+      this.pendingHello = false
+      this.sessionStarted = true
+    } else {
       this.connect()
     }
   }
@@ -113,6 +142,10 @@ class VoiceClient {
     this.send({ type: 'barge_in' })
   }
 
+  playbackDone(utteranceId, epoch) {
+    this.send({ type: 'playback_done', utterance_id: utteranceId, epoch })
+  }
+
   control(action) {
     this.send({ type: 'control', action })
   }
@@ -127,6 +160,8 @@ class VoiceClient {
 
   close() {
     this.closedByUser = true
+    clearInterval(this.pingTimer)
+    this.pingTimer = 0
     this.ws?.close()
     this.ws = null
   }
