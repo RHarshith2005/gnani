@@ -144,7 +144,7 @@ One brain, many channels: the browser mic, typed text and the guided demo all re
 | Capture | `getUserMedia` → AudioWorklet → linear resample to 16 kHz mono PCM16 |
 | Speech in | Gnani Prisma v3.0 realtime STT over `wss://api.vachana.ai/stt/v3/stream`; language, model, VAD and domain keyterms travel as handshake headers |
 | Speech out | Gnani Timbre v3.0 over `POST /api/v1/tts/inference` with `container: raw`, returned as 16 kHz PCM16 |
-| Fallback | Browser `SpeechRecognition` + `SpeechSynthesis`; scripted composer when no key |
+| Fallback | Prisma reconnects with backoff after a dropped stream; browser `SpeechRecognition` temporarily takes over when available; `SpeechSynthesis` and the scripted composer work without a key |
 | Numbers | Digits and rupee signs are spelled out in the active language before TTS |
 | Barge-in | Speaking while the agent talks stops playback and returns to listening |
 | Credit guard | Per-session and global TTS character caps; falls back to text with a notice |

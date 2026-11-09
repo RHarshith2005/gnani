@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Link, NavLink } from 'react-router-dom'
+import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useSession } from '../state/session.js'
 import { voice } from '../lib/voice.js'
 import FurTorus from './FurTorus.jsx'
@@ -22,6 +22,7 @@ const STATE_COPY = {
 }
 
 export default function AppShell({ children, orb = 'idle', level = 0, footer = null }) {
+  const location = useLocation()
   const sessionStartedAt = useSession((s) => s.sessionStartedAt)
   const status = useSession((s) => s.status)
   const [now, setNow] = useState(Date.now())
@@ -33,9 +34,10 @@ export default function AppShell({ children, orb = 'idle', level = 0, footer = n
 
   const elapsed = sessionStartedAt ? Math.max(0, Math.floor((now - sessionStartedAt) / 1000)) : 0
   const sessionWarning = elapsed >= 240
+  const demoEnabled = new URLSearchParams(location.search).get('demo') === '1'
 
   return (
-    <main className="screen">
+    <main className={`screen ${demoEnabled ? 'screen--demo' : ''}`}>
       <header className="screen__top">
         <Link to="/" className="screen__brand" aria-label="NegoAI home">
           <Logo compact tone="dark" />

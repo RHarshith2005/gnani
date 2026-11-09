@@ -14,6 +14,8 @@ import {
 let mic = null
 let recognition = null
 let recognitionLang = null
+let browserSttFallback = false
+let prismaReconnecting = false
 let levelTimer = 0
 let recognitionResumeTimer = 0
 let highMicLevelMs = 0
@@ -60,6 +62,32 @@ function monitorMicForBargeIn(int16) {
   return true
 }
 
+function ensureBrowserRecognition(lang) {
+  if (!speechRecognitionAvailable()) return false
+  if (recognition && recognitionLang !== lang) {
+    recognition.stop()
+    recognition = null
+  }
+  if (!recognition) {
+    recognitionLang = lang
+    recognition = startBrowserRecognition({
+      lang,
+      onPartial: (text) => useSession.getState().setPartial(text),
+      onFinal: (text) => {
+        useSession.getState().setPartial('')
+        voiceClient.text(text)
+      },
+      onError: (err) =>
+        useSession.getState().addNotice({
+          text: `Speech recognition: ${err}. Type instead.`,
+          level: 'warn',
+        }),
+    })
+  }
+  browserSttFallback = Boolean(recognition)
+  return browserSttFallback
+}
+
 let sideEffectsInstalled = false
 
 export function installEventSideEffects() {
@@ -82,13 +110,40 @@ export function installEventSideEffects() {
 
   const original = useSession.getState().applyEvent
   player.onPlaybackDone = (utteranceId, epoch) => {
-    if (epoch === currentEpoch) voiceClient.playbackDone(utteranceId, epoch)
+    if (epoch === currentEpoch) {
+      voiceClient.playbackDone(utteranceId, epoch)
+      if (browserSttFallback) {
+        clearTimeout(recognitionResumeTimer)
+        recognitionResumeTimer = setTimeout(() => recognition?.resume(), 400)
+      }
+    }
   }
   useSession.setState({
     applyEvent: (event) => {
       if (event?.type === 'ready') {
         currentEpoch = Number(event.epoch) || 0
         activeUtteranceId = null
+      }
+      if (event?.type === 'stt_status' && usingGnaniSTT()) {
+        if (event.status === 'ready') {
+          prismaReconnecting = false
+          browserSttFallback = false
+          if (recognition) {
+            recognition.stop()
+            recognition = null
+            recognitionLang = null
+          }
+        } else if (event.status === 'reconnecting' && useSession.getState().micOn) {
+          prismaReconnecting = true
+          if (!ensureBrowserRecognition(useSession.getState().language)) {
+            useSession.getState().addNotice({
+              text: 'Prisma is reconnecting. This browser has no speech-recognition fallback; use the text box.',
+              level: 'warn',
+            })
+          }
+        } else if (event.status === 'reconnecting') {
+          prismaReconnecting = true
+        }
       }
       if (
         (event?.type === 'agent' || event?.type === 'audio') &&
@@ -108,9 +163,11 @@ export function installEventSideEffects() {
       if (event?.type === 'agent') {
         currentEpoch = Math.max(currentEpoch, Number(event.epoch) || 0)
         activeUtteranceId = event.utterance_id
-        if (event.tts === 'browser') {
+        if (event.tts === 'browser' || browserSttFallback) {
           recognition?.pause()
           clearTimeout(recognitionResumeTimer)
+        }
+        if (event.tts === 'browser') {
           player.setBrowserSpeaking(true)
           const started = speakText(event.text, event.lang, {
             onend: () => {
@@ -118,12 +175,17 @@ export function installEventSideEffects() {
               if (Number.isInteger(event.utterance_id)) {
                 voiceClient.playbackDone(event.utterance_id, event.epoch)
               }
-              recognitionResumeTimer = setTimeout(() => recognition?.resume(), 400)
+              recognitionResumeTimer = setTimeout(() => {
+                if (browserSttFallback || !usingGnaniSTT()) recognition?.resume()
+              }, 400)
             },
           })
           if (!started) {
             player.setBrowserSpeaking(false)
             voiceClient.playbackDone(event.utterance_id, event.epoch)
+            if (browserSttFallback) {
+              recognitionResumeTimer = setTimeout(() => recognition?.resume(), 400)
+            }
           }
         }
       }
@@ -164,11 +226,12 @@ export async function enableMic() {
   const lang = store.language
 
   if (usingGnaniSTT()) {
+    if (prismaReconnecting) ensureBrowserRecognition(lang)
     try {
       mic = await createMic({
         onChunk: (int16) => {
           if (!useSession.getState().micOn || monitorMicForBargeIn(int16)) return
-          voiceClient.audio(int16)
+          if (!browserSttFallback) voiceClient.audio(int16)
         },
       })
     } catch (err) {
@@ -183,27 +246,7 @@ export async function enableMic() {
 
   // No server STT yet: keep capture local and let Chrome do the transcript.
   if (speechRecognitionAvailable()) {
-    if (recognition && recognitionLang !== lang) {
-      recognition.stop()
-      recognition = null
-    }
-    if (!recognition) {
-      recognitionLang = lang
-      recognition = startBrowserRecognition({
-        lang,
-        onPartial: (text) => useSession.getState().setPartial(text),
-        onFinal: (text) => {
-          useSession.getState().setPartial('')
-          useSession.getState().addLine({ role: 'resident', text, lang })
-          voiceClient.text(text)
-        },
-        onError: (err) =>
-          useSession.getState().addNotice({
-            text: `Speech recognition: ${err}. Type instead.`,
-            level: 'warn',
-          }),
-      })
-    }
+    ensureBrowserRecognition(lang)
     try {
       mic = await createMic({ onChunk: monitorMicForBargeIn })
     } catch {
@@ -226,6 +269,8 @@ export function disableMic() {
   recognition?.stop()
   recognition = null
   recognitionLang = null
+  browserSttFallback = false
+  prismaReconnecting = false
   useSession.getState().setMicOn(false)
   useSession.getState().setLevel(0)
   useSession.getState().setPartial('')
@@ -265,6 +310,8 @@ export const voice = {
   startDemo(language = 'kn-IN') {
     player.unlock().catch(() => {})
     primeVoices()
+    player.stop()
+    stopSyntheticLevel()
     const store = useSession.getState()
     store.reset()
     useSession.setState({ demoRunning: true, mode: 'guided', language })

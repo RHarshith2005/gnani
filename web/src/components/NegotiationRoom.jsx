@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import AppShell from './AppShell.jsx'
 import { useSession } from '../state/session.js'
 import { voice } from '../lib/voice.js'
@@ -25,6 +25,7 @@ function PriceTicker({ value, unit, label }) {
 }
 
 export default function NegotiationRoom() {
+  const location = useLocation()
   const orb = useSession((s) => s.orb)
   const level = useSession((s) => s.level)
   const negotiation = useSession((s) => s.negotiation)
@@ -53,11 +54,12 @@ export default function NegotiationRoom() {
   const stateLabel = (negotiation?.state || 'Waiting').replaceAll('_', ' ').toLowerCase()
 
   useEffect(() => {
-    if (!negotiation && useSession.getState().status === 'idle') {
+    const isGuidedDemo = new URLSearchParams(location.search).get('demo') === '1'
+    if (!isGuidedDemo && !negotiation && useSession.getState().status === 'idle') {
       // Deep link: open a session so the room is not dead.
       voice.startLive(language)
     }
-  }, [negotiation, language])
+  }, [negotiation, language, location.search])
 
   return (
     <AppShell orb={orb} level={level}>

@@ -4,6 +4,7 @@ import asyncio
 import time
 
 from api.config import Settings
+from api.agents.intake import IntakeState
 from api.voice.session import VoiceSession
 
 
@@ -184,3 +185,83 @@ def test_missing_playback_ack_uses_bounded_timeout():
         await session.close()
 
     asyncio.run(scenario())
+
+
+def test_duplicate_final_after_intake_does_not_repeat_negotiation(monkeypatch):
+    async def scenario():
+        events = []
+        session = None
+
+        async def send(payload):
+            events.append(dict(payload))
+            if session is not None and payload["type"] == "agent":
+                await session.playback_done(payload["utterance_id"], payload["epoch"])
+
+        session = VoiceSession(send, language="en-IN")
+        session.intake = IntakeState(
+            language="en-IN",
+            product="water can",
+            qty=3,
+            delivery_day="Saturday",
+            confirmed=True,
+            stage="flat",
+        )
+        starts = []
+
+        async def run_negotiation():
+            starts.append(True)
+
+        monkeypatch.setattr(session, "run_negotiation", run_negotiation)
+        await session._on_final_transcript("B-402")
+        await session._on_final_transcript("B-402")
+        await asyncio.sleep(0)
+
+        residents = [
+            event for event in events
+            if event["type"] == "transcript" and event.get("role") == "resident"
+        ]
+        assert len(residents) == 1
+        assert len(starts) == 1
+        await session.close()
+
+    asyncio.run(scenario())
+
+
+def test_prisma_error_starts_background_reconnect(monkeypatch):
+    async def scenario():
+        events = []
+        session = VoiceSession(
+            lambda payload: _record(events, payload),
+            config=Settings(gnani_api_key="test-key", gnani_key_id="test-key"),
+        )
+        attempts = []
+
+        class Live:
+            alive = True
+            language = "kn-IN"
+
+            async def close(self):
+                return None
+
+        async def restart():
+            attempts.append(True)
+            session.stt = Live()
+            await session.emit({"type": "stt_status", "status": "ready"})
+            return True
+
+        monkeypatch.setattr(session, "_restart_stt", restart)
+        await session._on_stt_error("upstream closed")
+        assert session._stt_reconnect_task is not None
+        await session._stt_reconnect_task
+        assert len(attempts) == 1
+        assert any(
+            event["type"] == "stt_status" and event["status"] == "ready"
+            for event in events
+        )
+        await session.close()
+
+    asyncio.run(scenario())
+
+
+async def _record(events, payload):
+    events.append(dict(payload))

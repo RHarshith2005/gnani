@@ -216,6 +216,7 @@ class GnaniSTTStream:
         self._ws = None
         self._reader: Optional[asyncio.Task] = None
         self._closed = False
+        self._error_reported = False
         self._buffer = bytearray()
         self._lock = asyncio.Lock()
 
@@ -270,8 +271,27 @@ class GnaniSTTStream:
             return True
         except Exception as exc:
             log.warning("Prisma STT unavailable (%s); browser STT will be used", exc)
-            await self.on_error(str(exc))
+            await self._report_error(str(exc))
             return False
+
+    async def _report_error(self, message: str) -> None:
+        if self._error_reported:
+            return
+        self._error_reported = True
+        await self.on_error(message)
+
+    async def _mark_failed(self, message: str) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._buffer.clear()
+        log.warning("Prisma STT stream failed: %s", message)
+        if self._ws is not None:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+        await self._report_error(message)
 
     async def _read_loop(self) -> None:
         assert self._ws is not None
@@ -287,7 +307,7 @@ class GnaniSTTStream:
                 if kind == "error":
                     text = str(data.get("message") or "Prisma STT error")
                     log.warning("Prisma STT error: %s", text)
-                    await self.on_error(text)
+                    await self._mark_failed(text)
                     return
                 text = data.get("text") or data.get("transcript")
                 if not isinstance(text, str) or not text.strip():
@@ -302,23 +322,33 @@ class GnaniSTTStream:
             raise
         except Exception as exc:
             if not self._closed:
-                log.warning("Prisma STT read loop ended: %s", exc)
-                await self.on_error(str(exc))
+                await self._mark_failed(str(exc))
+        else:
+            if not self._closed:
+                await self._mark_failed("Prisma STT connection closed")
 
-    async def send_audio(self, pcm: bytes) -> None:
+    async def send_audio(self, pcm: bytes) -> bool:
         if self._ws is None or self._closed or not pcm:
-            return
-        self._buffer.extend(pcm)
-        frames: list[bytes] = []
-        while len(self._buffer) >= STT_FRAME_BYTES:
-            frames.append(bytes(self._buffer[:STT_FRAME_BYTES]))
-            del self._buffer[:STT_FRAME_BYTES]
+            return False
+        error = None
         async with self._lock:
+            ws = self._ws
+            if ws is None or self._closed:
+                return False
+            self._buffer.extend(pcm)
+            frames: list[bytes] = []
+            while len(self._buffer) >= STT_FRAME_BYTES:
+                frames.append(bytes(self._buffer[:STT_FRAME_BYTES]))
+                del self._buffer[:STT_FRAME_BYTES]
             try:
                 for frame in frames:
-                    await self._ws.send(frame)
+                    await ws.send(frame)
             except Exception as exc:
-                log.debug("STT send failed: %s", exc)
+                error = str(exc)
+        if error is not None:
+            await self._mark_failed(error)
+            return False
+        return True
 
     async def close(self) -> None:
         self._closed = True

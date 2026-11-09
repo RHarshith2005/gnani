@@ -159,6 +159,9 @@ class VoiceSession:
         self.stt: Optional[GnaniSTTStream] = None
         self._stt_lock = asyncio.Lock()
         self._last_stt_retry = 0.0
+        self._stt_retry_at = 0.0
+        self._stt_retry_delay = 1.0
+        self._stt_reconnect_task: Optional[asyncio.Task] = None
         self.pace = max(0.01, self.config.demo_pace) if self.mode == "guided" else 1.0
         self._last_level = 0.0
         self._closed = False
@@ -173,7 +176,10 @@ class VoiceSession:
         self._resident_ready = asyncio.Event()
         self._input_lock = asyncio.Lock()
         self._recent_agent_lines: deque[str] = deque(maxlen=3)
+        self._last_final_transcript = ""
+        self._last_final_transcript_at = 0.0
         self._last_negotiation_notice = 0.0
+        self._negotiation_started = False
         # Playback controls (Prompt 10). The gate is set while running.
         self.paused = asyncio.Event()
         self.paused.set()
@@ -216,6 +222,11 @@ class VoiceSession:
         self.offers.clear()
         self.negotiation_id = None
         self._turns = 0
+        self._negotiation_started = False
+        self._last_final_transcript = ""
+        self._last_final_transcript_at = 0.0
+        self._stt_retry_at = 0.0
+        self._stt_retry_delay = 1.0
         await self._restart_stt()
         await self.emit(self.ready_payload())
 
@@ -265,30 +276,43 @@ class VoiceSession:
         self.tasks.clear()
         await asyncio.sleep(0)
 
-    async def _restart_stt(self) -> None:
+    async def _restart_stt(self) -> bool:
         """Prisma fixes language and VAD at handshake, so a switch means reconnect."""
         if not self.config.has_gnani:
-            return
-        if self.stt is not None:
-            await self.stt.close()
+            return False
+        async with self._stt_lock:
+            if (
+                self.stt is not None
+                and self.stt.alive
+                and self.stt.language == self.language
+            ):
+                return True
+            if self.stt is not None:
+                await self.stt.close()
+                self.stt = None
+            stream = GnaniSTTStream(
+                language=self.language,
+                on_partial=self._on_partial,
+                on_final=self._on_final_transcript,
+                on_error=self._on_stt_error,
+                config=self.config,
+            )
+            if await stream.start():
+                self.stt = stream
+                self._stt_retry_at = 0.0
+                self._stt_retry_delay = 1.0
+                await self.emit({"type": "stt_status", "status": "ready"})
+                return True
             self.stt = None
-        stream = GnaniSTTStream(
-            language=self.language,
-            on_partial=self._on_partial,
-            on_final=self._on_final_transcript,
-            on_error=self._on_stt_error,
-            config=self.config,
-        )
-        if await stream.start():
-            self.stt = stream
-        else:
+            self._stt_retry_at = time.monotonic() + self._stt_retry_delay
+            self._stt_retry_delay = min(self._stt_retry_delay * 2.0, 30.0)
             await self.emit(
                 {
-                    "type": "notice",
-                    "level": "warn",
-                    "text": "Prisma STT did not connect; using the browser recogniser.",
+                    "type": "stt_status",
+                    "status": "reconnecting",
                 }
             )
+            return False
 
     # --------------------------------------------------------------------- speech
     def _speech_seconds(self, text: str) -> float:
@@ -444,6 +468,9 @@ class VoiceSession:
             remaining -= step
 
     async def _resident(self, text: str, subtitle: str = "") -> None:
+        if self._negotiation_started:
+            log.info("Dropped intake after negotiation had already started")
+            return
         await self.emit(
             {
                 "type": "transcript",
@@ -455,6 +482,8 @@ class VoiceSession:
         )
         await self.emit({"type": "state", "orb": "thinking"})
         reply = self.intake.handle(text)
+        if reply.done:
+            self._negotiation_started = True
         if reply.kind == "confirm":
             await self.emit(
                 {"type": "confirm", "text": reply.say, "items": [reply.slots]}
@@ -561,15 +590,12 @@ class VoiceSession:
             return
         if self.stt is not None and self.stt.alive:
             return
-        async with self._stt_lock:
-            if self.stt is not None and self.stt.alive:
-                return
-            now = time.monotonic()
-            if now - self._last_stt_retry < 3.0:
-                return
-            self._last_stt_retry = now
-            log.info("Reconnecting Prisma STT for %s", self.language)
-            await self._restart_stt()
+        now = time.monotonic()
+        if now < self._stt_retry_at or now - self._last_stt_retry < 0.5:
+            return
+        self._last_stt_retry = now
+        log.info("Reconnecting Prisma STT for %s", self.language)
+        await self._restart_stt()
 
     async def handle_audio(self, data: bytes) -> None:
         if self.agent_speaking:
@@ -591,6 +617,13 @@ class VoiceSession:
         if self.agent_speaking or self._is_agent_echo(text):
             log.info("Dropped final transcript while agent is speaking or for echo")
             return
+        normalized = self._normalise_line(text)
+        now = time.monotonic()
+        if normalized and normalized == self._last_final_transcript and now - self._last_final_transcript_at < 3.0:
+            log.info("Dropped duplicate Prisma final transcript")
+            return
+        self._last_final_transcript = normalized
+        self._last_final_transcript_at = now
         if language_mismatch(text, self.language):
             name = LANGUAGE_NAMES.get(self.language, self.language)
             await self.emit(
@@ -607,13 +640,29 @@ class VoiceSession:
         await self.handle_text(text)
 
     async def _on_stt_error(self, message: str) -> None:
+        log.warning("Prisma STT disconnected for session: %s", message)
+        await self.emit({"type": "stt_status", "status": "reconnecting"})
         await self.emit(
             {
                 "type": "notice",
                 "level": "warn",
-                "text": f"Prisma STT error ({message}); use the text box or browser mic.",
+                "text": "Prisma speech recognition disconnected; reconnecting. You can keep speaking or use the text box.",
             }
         )
+        if self.config.has_gnani and (
+            self._stt_reconnect_task is None or self._stt_reconnect_task.done()
+        ):
+            self._stt_reconnect_task = self._spawn(self._retry_stt())
+
+    async def _retry_stt(self) -> None:
+        while not self._closed:
+            delay = max(0.0, self._stt_retry_at - time.monotonic())
+            if delay:
+                await asyncio.sleep(delay)
+            if self.stt is not None and self.stt.alive:
+                return
+            if await self._restart_stt():
+                return
 
     async def set_language(self, language: str) -> None:
         language = normalise(language)

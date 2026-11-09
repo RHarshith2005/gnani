@@ -777,10 +777,25 @@
 }
 
 @media (max-width: 900px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+  }
+  body {
+    overflow-y: auto;
+  }
+  .screen {
+    height: auto;
+    min-height: 100dvh;
+  }
   .screen__card {
     grid-template-columns: 1fr;
+    flex: 0 0 auto;
     min-height: 0;
     max-height: none;
+    overflow: visible;
   }
   .screen__panel {
     order: 2;
@@ -809,6 +824,9 @@
   .screen__navlink {
     padding: 6px 9px;
     font-size: 10px;
+  }
+  .screen--demo {
+    padding-bottom: 96px;
   }
 }
 

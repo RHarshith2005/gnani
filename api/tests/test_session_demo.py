@@ -35,6 +35,20 @@ def test_guided_demo_runs_end_to_end():
 
     vendors = {event["vendor_id"] for event in events if event["type"] == "vendor"}
     assert len(vendors) == 3
+    assert sum(
+        event["type"] == "phase" and event.get("phase") == "negotiation"
+        for event in events
+    ) == 1
+    for vendor_id in vendors:
+        prices = []
+        for event in events:
+            if event["type"] != "vendor" or event["vendor_id"] != vendor_id:
+                continue
+            price = event["quote"]["unit_price"]
+            if not prices or prices[-1] != price:
+                prices.append(price)
+        assert len(prices) == 3
+        assert prices[0] > prices[1] > prices[2]
 
     offers_events = [event for event in events if event["type"] == "offers"]
     assert offers_events, "no offer snapshots emitted"

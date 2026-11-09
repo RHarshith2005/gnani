@@ -121,5 +121,63 @@ def test_audio_is_rechunked_into_1024_byte_frames():
     assert [len(frame) for frame in sent] == [STT_FRAME_BYTES, STT_FRAME_BYTES]
 
 
+def test_stt_send_failure_marks_stream_dead_and_reports_once():
+    errors = []
+
+    async def on_error(message):
+        errors.append(message)
+
+    class BrokenSocket:
+        async def send(self, _frame):
+            raise OSError("socket closed")
+
+        async def close(self):
+            return None
+
+    stream = GnaniSTTStream(
+        language="en-IN",
+        on_partial=_ignore,
+        on_final=_ignore,
+        on_error=on_error,
+        config=_settings(),
+    )
+    stream._ws = BrokenSocket()  # type: ignore[assignment]
+
+    async def scenario():
+        assert not await stream.send_audio(b"a" * STT_FRAME_BYTES)
+        assert not await stream.send_audio(b"b" * STT_FRAME_BYTES)
+
+    asyncio.run(scenario())
+    assert errors == ["socket closed"]
+    assert stream._closed
+
+
+def test_stt_clean_remote_close_is_reported():
+    errors = []
+
+    async def on_error(message):
+        errors.append(message)
+
+    class ClosedSocket:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    stream = GnaniSTTStream(
+        language="en-IN",
+        on_partial=_ignore,
+        on_final=_ignore,
+        on_error=on_error,
+        config=_settings(),
+    )
+    stream._ws = ClosedSocket()  # type: ignore[assignment]
+
+    asyncio.run(stream._read_loop())
+    assert errors == ["Prisma STT connection closed"]
+    assert stream._closed
+
+
 async def _ignore(_text: str) -> None:
     return None

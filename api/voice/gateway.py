@@ -2,7 +2,7 @@
 
 Inbound: hello, text, audio, barge_in, approve, language, reset.
 Outbound: ready, state, level, partial, transcript, agent, audio, confirm,
-demand, phase, negotiation, vendor, offers, admin, approval, notice, error.
+demand, phase, negotiation, vendor, offers, admin, approval, stt_status, notice, error.
 
 No session starts until ``hello`` arrives, so the greeting always uses the
 language the client actually asked for.
