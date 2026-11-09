@@ -7,6 +7,8 @@ import { useSession, LANGUAGES } from '../state/session.js'
 import { voice } from '../lib/voice.js'
 import { voiceClient } from '../lib/client.js'
 import { ROLE_LABEL } from '../lib/format.js'
+import { ConsoleLine, ConsoleReadback, ConsoleStatus, MobileMicSheet, ScriptPreview } from '../design/ConsoleExperience.jsx'
+import { DESIGN_FLAGS } from '../design/flags.js'
 
 const ease = [0.22, 1, 0.36, 1]
 const API = import.meta.env.VITE_API_URL || ''
@@ -85,6 +87,7 @@ export default function VoiceConsole() {
   const notices = useSession((s) => s.notices)
   const micOn = useSession((s) => s.micOn)
   const community = useSession((s) => s.community)
+  const error = useSession((s) => s.error)
   const [draft, setDraft] = useState('')
   const [langOpen, setLangOpen] = useState(false)
   const scrollRef = useRef(null)
@@ -133,10 +136,12 @@ export default function VoiceConsole() {
           >
             {LANGUAGES.find((l) => l.id === language)?.label || language} ▾
           </button>
+          {DESIGN_FLAGS.console ? <ScriptPreview language={language} /> : null}
         </div>
       </header>
 
       <div className="panel__body" ref={scrollRef}>
+        {DESIGN_FLAGS.console ? <ConsoleStatus status={status} hasLines={lines.length > 0} error={error} /> : null}
         <div className="transcript">
           {lines.length === 0 && (
             <div className="transcript__empty">
@@ -152,23 +157,11 @@ export default function VoiceConsole() {
             const age = lines.length - 1 - index
             const opacity = Math.max(0.34, 1 - age * 0.06)
             return (
-              <motion.div
-                key={line.id}
-                className={`line line--${line.role}`}
-                style={{ opacity }}
-                initial={{ opacity: 0, y: 10, filter: 'blur(4px)' }}
-                animate={{ opacity, y: 0, filter: 'blur(0px)' }}
-                transition={{ duration: 0.5, ease }}
-              >
-                <div className="line__meta">
-                  <strong>{line.vendor || ROLE_LABEL[line.role] || line.role}</strong>
-                  {line.lang ? <span>{line.lang}</span> : null}
-                  {index === lines.length - 1 ? <span>newest</span> : null}
-                </div>
-                <p className="line__text">{line.text}</p>
-                {line.subtitle && line.subtitle !== line.text ? (
-                  <p className="line__gloss">{line.subtitle}</p>
-                ) : null}
+              <motion.div key={line.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity, y: 0 }}
+                transition={{ duration: 0.5, ease }}>
+                {DESIGN_FLAGS.console
+                  ? <ConsoleLine line={line} newest={index === lines.length - 1} />
+                  : <div className={`line line--${line.role}`}><div className="line__meta"><strong>{line.vendor || ROLE_LABEL[line.role] || line.role}</strong>{line.lang ? <span>{line.lang}</span> : null}</div><p className="line__text">{line.text}</p>{line.subtitle && line.subtitle !== line.text ? <p className="line__gloss">{line.subtitle}</p> : null}</div>}
               </motion.div>
             )
           })}
@@ -208,6 +201,7 @@ export default function VoiceConsole() {
             exit={{ opacity: 0, y: 10, height: 0 }}
             transition={{ duration: 0.45, ease }}
           >
+            {DESIGN_FLAGS.console ? <ConsoleReadback confirm={confirm} /> : null}
             <p className="confirm__question">{confirm.text}</p>
             <p className="confirm__hint">Confirm before it counts</p>
             <div className="confirm__actions">
@@ -223,6 +217,7 @@ export default function VoiceConsole() {
       </AnimatePresence>
 
       <div className="panel__foot">
+        {DESIGN_FLAGS.console ? <MobileMicSheet /> : null}
         <div className="composer">
           <button
             type="button"

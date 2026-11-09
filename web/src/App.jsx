@@ -7,6 +7,8 @@ import AdminApproval from './components/AdminApproval.jsx'
 import Replay from './components/Replay.jsx'
 import DemoBar from './components/DemoBar.jsx'
 import { installEventSideEffects } from './lib/voice.js'
+import JudgeTour from './design/JudgeTour.jsx'
+import { DESIGN_FLAGS } from './design/flags.js'
 
 export default function App() {
   const location = useLocation()
@@ -25,6 +27,7 @@ export default function App() {
         <Route path="/replay" element={<Replay />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      {DESIGN_FLAGS.tour ? <JudgeTour /> : null}
       <DemoBar />
     </>
   )

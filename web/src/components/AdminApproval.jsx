@@ -4,6 +4,8 @@ import AppShell from './AppShell.jsx'
 import { useSession } from '../state/session.js'
 import { voice } from '../lib/voice.js'
 import { inr } from '../lib/format.js'
+import { DESIGN_FLAGS } from '../design/flags.js'
+import ApprovalExperience from '../design/ApprovalExperience.jsx'
 
 const ease = [0.22, 1, 0.36, 1]
 
@@ -13,6 +15,8 @@ export default function AdminApproval() {
   const admin = useSession((s) => s.admin)
   const approval = useSession((s) => s.approval)
   const negotiation = useSession((s) => s.negotiation)
+  const offers = useSession((s) => s.offers)
+  const sessionId = useSession((s) => s.sessionId)
   const language = useSession((s) => s.language)
 
   const waiting = !admin
@@ -96,9 +100,11 @@ export default function AdminApproval() {
                 </p>
                 <p className="admin-card__sub">
                   {admin.best?.vendor_name || 'No eligible vendor'} ·{' '}
-                  {admin.best?.delivery_charge
-                    ? `${inr(admin.best.delivery_charge)} delivery`
-                    : 'free delivery'}
+                  {admin.best?.delivery_charge == null
+                    ? '— delivery'
+                    : admin.best.delivery_charge === 0
+                      ? 'free delivery'
+                      : `${inr(admin.best.delivery_charge)} delivery`}
                   {admin.best?.delivery_days ? ` in ${admin.best.delivery_days} days` : ''}
                 </p>
               </motion.div>
@@ -111,6 +117,16 @@ export default function AdminApproval() {
                   ))}
                 </ul>
               </div>
+
+              {DESIGN_FLAGS.approval ? (
+                <ApprovalExperience
+                  admin={admin}
+                  offers={offers}
+                  approval={approval}
+                  sessionId={negotiation?.negotiation_id || sessionId}
+                  onApprove={() => voice.approve('approved')}
+                />
+              ) : null}
 
               <div className="admin-card admin-card--wide">
                 <p className="admin-card__label">Summary</p>
@@ -130,8 +146,8 @@ export default function AdminApproval() {
                   transition={{ duration: 0.4, ease }}
                 >
                   {approval.decision === 'approved'
-                    ? 'Approved — vendor is notified, committee decision recorded'
-                    : 'Rejected — offer returns to the negotiation engine'}
+                    ? 'Decision recorded. Vendors are simulated.'
+                    : 'Decision recorded. Vendors are simulated.'}
                 </motion.div>
               ) : (
                 <>

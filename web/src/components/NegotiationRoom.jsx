@@ -1,32 +1,23 @@
-import { useEffect, useState } from 'react'
-import { animate, motion } from 'framer-motion'
+import { useEffect } from 'react'
+import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import AppShell from './AppShell.jsx'
 import { useSession } from '../state/session.js'
 import { voice } from '../lib/voice.js'
 import { inr } from '../lib/format.js'
+import { DESIGN_FLAGS } from '../design/flags.js'
+import RoomInsights from '../design/RoomInsights.jsx'
+import { selectRoomModel } from '../design/selectors.js'
 
 const ease = [0.22, 1, 0.36, 1]
 
 function PriceTicker({ value, unit, label }) {
-  const [display, setDisplay] = useState(value ?? 0)
-
-  useEffect(() => {
-    if (value == null) return
-    const controls = animate(display, value, {
-      duration: 0.7,
-      ease,
-      onUpdate: (v) => setDisplay(v),
-    })
-    return () => controls.stop()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value])
 
   return (
     <div>
       <p className="ticker__label">{label}</p>
       <div className="ticker">
-        <span className="ticker__value">₹{Math.round(display)}</span>
+        <span className="ticker__value">{inr(value)}</span>
         <span className="ticker__unit">{unit}</span>
       </div>
     </div>
@@ -38,7 +29,6 @@ export default function NegotiationRoom() {
   const level = useSession((s) => s.level)
   const negotiation = useSession((s) => s.negotiation)
   const vendors = useSession((s) => s.vendors)
-  const offers = useSession((s) => s.offers)
   const firstQuote = useSession((s) => s.firstQuote)
   const lines = useSession((s) => s.lines)
   const community = useSession((s) => s.community)
@@ -51,23 +41,16 @@ export default function NegotiationRoom() {
   const vendorList = Object.values(vendors).sort(
     (a, b) => (a.quote?.unit_price ?? 999) - (b.quote?.unit_price ?? 999),
   )
-  const bestOffer = offers.length
-    ? offers.reduce((best, offer) => (offer.effective < best.effective ? offer : best), offers[0])
-    : null
-  const bestVendor = bestOffer ? vendors[bestOffer.vendor_id] : null
-  const livePrice = vendorList.length
-    ? Math.min(...vendorList.map((v) => v.quote?.unit_price ?? Infinity))
-    : null
+  const bestOffer = selectRoomModel(useSession.getState()).best
+  const livePrice = selectRoomModel(useSession.getState()).currentPrice
+  const bestVendor = vendorList.find((vendor) => vendor.vendor_id === bestOffer?.vendor_id)
 
   const lastLine = lines[lines.length - 1]
-  const agentSpeaking = orb === 'speaking' || orb === 'listening' || orb === 'thinking'
-  const vendorSpeaking = lastLine?.role === 'vendor' && orb !== 'speaking'
+  const vendorSpeaking = orb === 'speaking' && lastLine?.role === 'vendor'
+  const agentSpeaking = orb === 'speaking' && lastLine?.role === 'agent'
 
   const maxRounds = negotiation?.maxRounds || 3
-  const savings =
-    firstQuote != null && livePrice != null
-      ? Math.max(0, (firstQuote - livePrice) * (negotiation?.qty || 360))
-      : null
+  const stateLabel = (negotiation?.state || 'Waiting').replaceAll('_', ' ').toLowerCase()
 
   useEffect(() => {
     if (!negotiation && useSession.getState().status === 'idle') {
@@ -90,7 +73,7 @@ export default function NegotiationRoom() {
           <span className="pill">
             Round {negotiation?.round ?? 0} / {maxRounds}
           </span>
-          <span className="pill">{negotiation?.state || 'Waiting'}</span>
+          <span className="pill">{stateLabel}</span>
         </div>
       </header>
 
@@ -99,8 +82,8 @@ export default function NegotiationRoom() {
           <div className="room__empty">
             <p>
               No live negotiation yet. Start one from the voice console — ask for water cans in
-              Kannada, Hindi or English — or run the guided demo to watch three simulated suppliers
-              bid for the same 360-can weekly demand.
+              Kannada, Hindi or English — or run the guided demo to watch simulated suppliers bid
+              for the same verified weekly demand.
             </p>
             <div className="approval-actions" style={{ marginTop: 16 }}>
               <button type="button" className="btn-solid" onClick={() => voice.startDemo(language)}>
@@ -113,21 +96,17 @@ export default function NegotiationRoom() {
           </div>
         ) : (
           <>
+            {DESIGN_FLAGS.room ? <RoomInsights state={useSession.getState()} /> : null}
             <div className="room__summary">
-              <PriceTicker
-                value={livePrice ?? firstQuote ?? 0}
+              {livePrice != null || firstQuote != null ? <PriceTicker
+                value={livePrice ?? firstQuote}
                 unit={`per ${negotiation.product || 'unit'}`}
                 label="Best live quote"
-              />
+              /> : <p className="ticker__label">Waiting for the first quote…</p>}
               <div className="room__delta">
                 {firstQuote != null ? (
                   <>
                     Opening quote <strong>{inr(firstQuote)}</strong>
-                    {savings ? (
-                      <span>
-                        {inr(savings)} saved per week at this price
-                      </span>
-                    ) : null}
                   </>
                 ) : (
                   <span>Waiting for the first quote…</span>
@@ -142,7 +121,7 @@ export default function NegotiationRoom() {
                 return (
                   <motion.article
                     key={vendor.vendor_id}
-                    className={`vendor-card ${isBest ? 'is-best' : ''} ${vendorSpeaking && vendor.vendor_id === lastLine?.vendor ? 'is-speaking' : ''}`}
+                    className={`vendor-card ${isBest ? 'is-best' : ''} ${vendorSpeaking && vendor.name === lastLine?.vendor ? 'is-speaking' : ''}`}
                     initial={{ opacity: 0, y: 14 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5, ease }}
@@ -169,12 +148,12 @@ export default function NegotiationRoom() {
                     <div className="vendor-card__meta">
                       <span>
                         Delivery:{' '}
-                        {quote.delivery_charge ? `${inr(quote.delivery_charge)} / order` : 'free'}
-                        {vendor.delivery_days ? ` · ${vendor.delivery_days} days` : ''}
+                        {quote.delivery_charge == null ? '—' : quote.delivery_charge === 0 ? 'free' : `${inr(quote.delivery_charge)} / order`}
+                        {vendor.delivery_days ? ` · ${vendor.delivery_days} ${vendor.delivery_days === 1 ? 'day' : 'days'}` : ''}
                       </span>
                       <span>
                         Min qty: {quote.min_qty ?? negotiation.qty ?? '—'} · valid{' '}
-                        {quote.valid_days ?? 7} days
+                        {quote.valid_days == null ? '—' : `${quote.valid_days} ${quote.valid_days === 1 ? 'day' : 'days'}`}
                       </span>
                     </div>
 
@@ -224,9 +203,9 @@ export default function NegotiationRoom() {
             <span className={`mini-orb ${vendorSpeaking ? 'is-speaking' : ''}`} />
             Vendor
           </span>
-          {bestVendor ? (
+          {bestVendor && (bestOffer?.unit_price ?? bestVendor.quote?.unit_price) != null ? (
             <span className="speaker" style={{ marginLeft: 'auto', color: '#fff' }}>
-              Eligible: {bestVendor.name} at ₹{bestVendor.quote?.unit_price}
+              Eligible: {bestVendor.name} at ₹{bestOffer?.unit_price ?? bestVendor.quote?.unit_price}
             </span>
           ) : null}
         </div>

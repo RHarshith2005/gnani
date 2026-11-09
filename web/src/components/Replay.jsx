@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import AppShell from './AppShell.jsx'
 import { inr } from '../lib/format.js'
+import ReplayExperience from '../design/ReplayExperience.jsx'
+import { DESIGN_FLAGS } from '../design/flags.js'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -19,6 +21,7 @@ export default function Replay() {
   const [events, setEvents] = useState([])
   const [cursor, setCursor] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [speed, setSpeed] = useState(1)
   const [error, setError] = useState(null)
   const [receipt, setReceipt] = useState(null)
   const timer = useRef(0)
@@ -85,9 +88,9 @@ export default function Replay() {
         }
         return c + 1
       })
-    }, 850)
+    }, DESIGN_FLAGS.replay ? 850 / speed : 850)
     return () => clearInterval(timer.current)
-  }, [playing, events.length])
+  }, [playing, events.length, speed])
 
   const visible = useMemo(() => events.slice(0, cursor), [events, cursor])
   const offers = visible.filter((e) => e.type === 'offer')
@@ -145,7 +148,10 @@ export default function Replay() {
 
         {active ? (
           <>
-            <div className="replay__controls">
+            {DESIGN_FLAGS.replay ? (
+              <ReplayExperience events={events} cursor={cursor} setCursor={setCursor} playing={playing}
+                setPlaying={setPlaying} speed={speed} setSpeed={setSpeed} />
+            ) : <div className="replay__controls">
               <button
                 type="button"
                 className="btn-solid"
@@ -174,7 +180,7 @@ export default function Replay() {
               {latest?.payload?.unit_price != null ? (
                 <span className="pill">Last quote {inr(latest.payload.unit_price)}</span>
               ) : null}
-            </div>
+            </div>}
 
             {receipt ? (
               <div className="replay__controls">
