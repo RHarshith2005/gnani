@@ -230,7 +230,7 @@ Open **`http://localhost:8000/?demo=1`** (or `/room?demo=1`) and press **Start d
 
 ## Deploy on Vercel
 
-The repo ships a Vercel-ready shape: `app.py` is the Python entrypoint, `vercel.json` installs the root `requirements.txt` and web dependencies, builds `web/dist`, and Vercel routes REST and `/ws/voice` to one FastAPI function in the Mumbai region (`bom1`). WebSockets need Fluid Compute (on by default) and stay open until the function duration limit.
+The repo ships a Vercel-ready shape: `app.py` is the Python entrypoint, `vercel.json` installs the root `requirements.txt` and web dependencies, builds `web/dist`, includes that build in the Python function bundle, and Vercel routes the SPA, REST, and `/ws/voice` to one FastAPI function in the Mumbai region (`bom1`). WebSockets need Fluid Compute (on by default) and stay open until the function duration limit.
 
 Set these in **Project Settings → Environment Variables**: `GNANI_API_KEY`, `GNANI_STT_MODEL`, `GNANI_TTS_MODEL`, and optionally `LLM_API_KEY` and the `SUPABASE_*` keys. Do **not** set `NEGOAI_DB`: Vercel's filesystem is read-only except `/tmp`, so the store automatically moves to `/tmp/negoai.sqlite3` there.
 
